@@ -2,23 +2,65 @@ import SwiftUI
 
 @main
 struct LookpointApp: App {
-    @State private var model = AppModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(model: model)
+            MenuContent(model: delegate.model, showCalibration: delegate.showCalibration)
         } label: {
-            Image(systemName: model.activeScreen == .primary ? "laptopcomputer" : "display")
+            Image(systemName: delegate.model.activeScreen == .primary ? "laptopcomputer" : "display")
         }
         .menuBarExtraStyle(.window)
-
-        Window("校准副屏", id: WindowID.calibration) {
-            CalibrationView(model: model)
-        }
-        .windowResizability(.contentSize)
     }
 }
 
-enum WindowID {
-    static let calibration = "calibration"
+/// Owns the model and the app's windows. Windows are plain AppKit windows so
+/// they can be opened without the menu bar icon, which macOS may hide behind
+/// the notch: opening Lookpoint again shows the status window.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    let model = AppModel()
+    private var statusWindow: NSWindow?
+    private var calibrationWindow: NSWindow?
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showStatus()
+        return false
+    }
+
+    func showStatus() {
+        if statusWindow == nil {
+            statusWindow = makeWindow(title: "Lookpoint", content: MenuContent(model: model, showCalibration: showCalibration))
+        }
+        present(statusWindow)
+    }
+
+    func showCalibration() {
+        if calibrationWindow == nil {
+            calibrationWindow = makeWindow(title: "校准副屏", content: CalibrationView(model: model))
+        }
+        model.setCalibrating(true)
+        present(calibrationWindow)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if notification.object as? NSWindow === calibrationWindow {
+            model.setCalibrating(false)
+        }
+    }
+
+    private func makeWindow(title: String, content: some View) -> NSWindow {
+        let window = NSWindow(contentViewController: NSHostingController(rootView: content))
+        window.title = title
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        return window
+    }
+
+    private func present(_ window: NSWindow?) {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
 }

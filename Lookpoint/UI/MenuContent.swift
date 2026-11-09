@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MenuContent: View {
     @Bindable var model: AppModel
-    @Environment(\.openWindow) private var openWindow
+    var showCalibration: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -57,10 +57,7 @@ struct MenuContent: View {
             Divider()
 
             HStack {
-                Button("校准副屏…") {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: WindowID.calibration)
-                }
+                Button("校准副屏…", action: showCalibration)
                 Spacer()
                 Button("退出") { NSApp.terminate(nil) }
             }

@@ -35,8 +35,6 @@ struct CalibrationView: View {
         }
         .padding(20)
         .frame(width: 380, alignment: .leading)
-        .onAppear { model.setCalibrating(true) }
-        .onDisappear { model.setCalibrating(false) }
     }
 
     private var buttonTitle: String {
