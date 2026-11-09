@@ -6,7 +6,7 @@ struct LookpointApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(model: delegate.model, showCalibration: delegate.showCalibration)
+            MenuContent(model: delegate.model, showCalibration: delegate.showCalibration, showHandLab: delegate.showHandLab)
         } label: {
             Image(systemName: delegate.model.activeScreen == .primary ? "laptopcomputer" : "display")
         }
@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = AppModel()
     private var statusWindow: NSWindow?
     private var calibrationWindow: NSWindow?
+    private var handLabWindow: NSWindow?
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showStatus()
@@ -30,7 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func showStatus() {
         if statusWindow == nil {
-            statusWindow = makeWindow(title: "Lookpoint", content: MenuContent(model: model, showCalibration: showCalibration))
+            statusWindow = makeWindow(
+                title: "Lookpoint",
+                content: MenuContent(model: model, showCalibration: showCalibration, showHandLab: showHandLab)
+            )
         }
         present(statusWindow)
     }
@@ -43,16 +47,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         present(calibrationWindow)
     }
 
-    func windowWillClose(_ notification: Notification) {
-        if notification.object as? NSWindow === calibrationWindow {
-            model.setCalibrating(false)
+    func showHandLab() {
+        if handLabWindow == nil {
+            handLabWindow = makeWindow(
+                title: "手部识别实验",
+                content: HandLabView(model: model, lab: model.handLab),
+                resizable: true
+            )
         }
+        model.setHandLabOpen(true)
+        present(handLabWindow)
     }
 
-    private func makeWindow(title: String, content: some View) -> NSWindow {
+    func windowWillClose(_ notification: Notification) {
+        let window = notification.object as? NSWindow
+        if window === calibrationWindow { model.setCalibrating(false) }
+        if window === handLabWindow { model.setHandLabOpen(false) }
+    }
+
+    private func makeWindow(title: String, content: some View, resizable: Bool = false) -> NSWindow {
         let window = NSWindow(contentViewController: NSHostingController(rootView: content))
         window.title = title
-        window.styleMask = [.titled, .closable]
+        window.styleMask = resizable ? [.titled, .closable, .miniaturizable, .resizable] : [.titled, .closable]
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()

@@ -3,6 +3,7 @@ import SwiftUI
 struct MenuContent: View {
     @Bindable var model: AppModel
     var showCalibration: () -> Void
+    var showHandLab: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -58,6 +59,7 @@ struct MenuContent: View {
 
             HStack {
                 Button("校准副屏…", action: showCalibration)
+                Button("手部实验…", action: showHandLab)
                 Spacer()
                 Button("退出") { NSApp.terminate(nil) }
             }

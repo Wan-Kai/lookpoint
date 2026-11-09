@@ -5,7 +5,7 @@ macOS 菜单栏工具，用笔记本自带摄像头做两件事：
 1. **看哪块屏，光标就去哪块屏**：根据头部朝向（yaw/pitch）在主屏（内建屏，带摄像头）和副屏之间切换。不做眼动追踪。
 2. **用手势控制鼠标**（还没做）：按住 ⌘ 时，手势接管移动、捏合点击、拖拽、滚动。
 
-当前进度：第 2 步，头姿切屏骨架已完成。
+当前进度：头姿切屏可用（第 2 步）；手部识别实验已就绪（第 3 步），等实测数据决定用 Vision 还是 MediaPipe。
 
 ## 构建与运行
 
@@ -39,6 +39,24 @@ xcodebuild -scheme Lookpoint -derivedDataPath build/DerivedData test
   - 校准后（菜单 → 校准副屏…，倒计时结束后看着副屏中央 1.5 秒），沿校准方向的角度 ≥ 校准角度的 60%（且至少 12°）才判定为副屏。副屏放在上方（主要是 pitch）也能用，看反方向或者低头看键盘不会误判。
 - 切换就是把光标移到目标屏：回到这块屏上次离开时的位置，没有记录就放到屏幕中央。只移光标，不点击，所以键盘焦点不会变。
 
+- **找不到菜单栏图标**（刘海屏上可能被藏起来）：再打开一次 Lookpoint.app，会弹出同样内容的状态窗口。
+
+## 手部识别实验（第 3 步）
+
+菜单 → 手部实验…。窗口打开期间每帧都跑手部识别（30 fps），并且暂停按头姿切屏；关掉窗口就停止手部识别。
+
+- 画面是镜像的，和照镜子一样：白色是 21 个关键点组成的骨架，红线是食指尖的原始轨迹，绿线是 One-Euro 滤波后的轨迹；捏合时指尖圆点变成黄色。
+- 底部曲线：拇指尖到食指尖的距离（归一化坐标），虚线是捏合迟滞阈值 on 0.055 / off 0.085。
+- 右侧数据：检测帧率、识别到手的比例、单帧耗时、手静止时的抖动（换算成主屏点数，原始 / 滤波后）、捏合距离、捏合距离 ÷ 掌长（和手离摄像头多远无关）、捏合次数。
+- 录制：把逐帧关键点存到 `~/Documents/lookpoint-recordings/hand-*.json`，第 4 步的手势状态机单测会用这些录制。
+
+建议在真实坐姿和光照下看这几项：
+
+1. 手静止时，滤波后的抖动能不能稳定在几个点以内；
+2. 识别到手的比例，以及手抬到键盘上方、侧面时会不会丢；
+3. 连续捏合 20 次，捏合次数是不是正好 20，有没有一次捏合被数成两次（曲线在两条虚线之间来回穿）；
+4. 手前后移动时，捏合距离的变化幅度。变化太大的话，第 4 步改用"捏合/掌长"判定。
+
 ## 防误切换
 
 | 机制 | 值 |
@@ -59,7 +77,12 @@ xcodebuild -scheme Lookpoint -derivedDataPath build/DerivedData test
 Lookpoint/
   LookpointApp.swift          MenuBarExtra + 校准窗口
   AppModel.swift              串起采集 → 滤波 → 路由 → 移光标
-  Capture/CameraPipeline.swift  AVCaptureSession 720p，串行队列；每 3 帧跑一次 Vision 人脸（约 10 fps）
+  Capture/CameraPipeline.swift  AVCaptureSession 720p，串行队列；每 3 帧跑一次 Vision 人脸（约 10 fps），
+                              需要时每帧跑手部；同一帧的请求共用一个 VNImageRequestHandler
+  Hand/
+    HandLandmarks.swift       21 个关键点（MediaPipe 顺序，左上原点，归一化）+ 捏合距离
+    HandLandmarker.swift      唯一的可替换接口：帧 → 21 点。现在是 Vision，将来可以换成 Core ML
+    HandLab.swift             第 3 步实验的统计和录制
   HeadPose/
     HeadPoseRouter.swift      头姿路由状态机（纯 Swift）
     OneEuroFilter.swift
@@ -70,7 +93,7 @@ Lookpoint/
 LookpointTests/               Swift Testing：用录制的头姿序列断言路由输出，包括"不应切换"的情况
 ```
 
-整个 App 只有一个进程独占摄像头。以后手部识别（`VNDetectHumanHandPoseRequest`）会加进 `CameraPipeline`，和人脸请求共用同一个 `VNImageRequestHandler`。
+整个 App 只有一个进程独占摄像头，同一帧同时供头姿和手部两路识别使用。
 
 ## 已知限制
 
@@ -81,8 +104,8 @@ LookpointTests/               Swift Testing：用录制的头姿序列断言路�
 ## 路线
 
 1. ~~用 `npx gazectl@latest` 验证头姿切屏能不能接受~~
-2. **头姿切屏骨架** ← 当前。验收：构建能跑通，日常用半天，看误切换情况
-3. 手部识别小实验：把食指尖坐标和捏合距离画在屏幕上，在真实坐姿和光照下看抖动和丢帧，决定继续用 Vision 还是换 MediaPipe 转成的 Core ML 模型
+2. ~~头姿切屏骨架~~。验收：日常用半天，看误切换情况
+3. **手部识别小实验** ← 当前：把食指尖坐标和捏合距离画在屏幕上，在真实坐姿和光照下看抖动和丢帧，决定继续用 Vision 还是换 MediaPipe 转成的 Core ML 模型
 4. 手势状态机（移动、捏合点击、拖拽、滚动）+ 按住 ⌘ 激活 + 手势激活期间冻结屏幕选择
 
 ## 参考

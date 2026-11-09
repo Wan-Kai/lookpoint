@@ -32,6 +32,9 @@ final class AppModel {
     private(set) var activeScreen: ScreenRole = .primary
     private(set) var hasAccessibility = AXIsProcessTrusted()
     private(set) var isCalibrating = false
+    private(set) var isHandLabOpen = false
+
+    let handLab = HandLab()
 
     var calibration: HeadPose? {
         didSet {
@@ -105,15 +108,27 @@ final class AppModel {
         isCalibrating = value
     }
 
+    /// Runs hand detection for the hand lab; head pose does not switch screens meanwhile.
+    func setHandLabOpen(_ value: Bool) {
+        isHandLabOpen = value
+        pipeline?.detectsHands = value
+    }
+
     private func start() {
         guard pipeline == nil else { return }
         cameraState = .starting
         activity.start()
 
-        let pipeline = CameraPipeline { [weak self] pose in
-            let time = ProcessInfo.processInfo.systemUptime
-            Task { @MainActor in self?.handle(pose, at: time) }
-        }
+        let pipeline = CameraPipeline(
+            onHeadPose: { [weak self] pose in
+                let time = ProcessInfo.processInfo.systemUptime
+                Task { @MainActor in self?.handle(pose, at: time) }
+            },
+            onHand: { [weak self] frame in
+                Task { @MainActor in self?.handLab.ingest(frame) }
+            }
+        )
+        pipeline.detectsHands = isHandLabOpen
         self.pipeline = pipeline
 
         Task {
@@ -162,7 +177,7 @@ final class AppModel {
         pose = smoothed
         calibrationSamples?.append(smoothed)
 
-        let suppressed = isCalibrating || activity.isActive(at: time)
+        let suppressed = isCalibrating || isHandLabOpen || activity.isActive(at: time)
         if let role = router.update(pose: smoothed, at: time, suppressed: suppressed) {
             activeScreen = role
             switcher.move(to: role)
