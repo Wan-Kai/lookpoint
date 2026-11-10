@@ -159,7 +159,7 @@ struct HandLabView: View {
             }
             .font(.caption.monospacedDigit())
 
-            Text("张开手掌 0.4 秒激活 · 张开平移=移动 · 捏=点击/拖拽 · 双指(V)上下=滚动、左右挥=切换 App · 单指指向静止 0.6 秒=右 Alt（结束说话后继续指着 0.8 秒=回车）· 其他手形=停住。红线/绿线是食指尖的原始/滤波轨迹。")
+            Text("张开手掌 0.4 秒激活 · 张开平移=移动 · 捏=点击/拖拽 · 双指(V)上下=滚动、左右挥=切换本屏窗口 · 单指指向静止 0.6 秒=右 Alt（结束说话后继续指着 0.8 秒=回车）· 其他手形=停住。红线/绿线是食指尖的原始/滤波轨迹。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -201,7 +201,7 @@ struct HandLabView: View {
         case .pressed: "按下"
         case .dragging: "拖拽"
         case .scrolling: "滚动"
-        case .switchingApps: "切换 App"
+        case .switchingWindows: "切换窗口"
         case .holding: "指向（保持触发右 Alt）"
         }
     }

@@ -11,9 +11,9 @@ import Foundation
 ///   A pinch only starts shortly after an open palm, so a fist (whose thumb
 ///   also touches the index finger) never clicks.
 /// - Two fingers (V): the first movement picks an axis for that V.
-///   Vertical scrolls, like a trackpad. A quick horizontal swipe switches
-///   apps (⌘Tab right, ⌘⇧Tab left); ⌘ stays held while the V does, so more
-///   swipes keep stepping, and leaving the V commits.
+///   Vertical scrolls, like a trackpad. A quick horizontal swipe switches to
+///   the next (right) or previous (left) window on the cursor's screen; more
+///   swipes in the same V keep stepping, and leaving the V ends the session.
 /// - Point held still for `holdDuration`: toggle right Option (voice input on/off).
 ///   When that toggle ends voice input, keeping the point still another
 ///   `enterDelay` presses Return, which also gives the text time to land.
@@ -90,10 +90,10 @@ struct GestureStateMachine {
         case scroll(dy: Double)
         case toggleRightOption
         case pressReturn
-        /// Holds ⌘ (if not yet) and taps Tab; `forward == false` adds ⇧.
-        case appSwitch(forward: Bool)
-        /// Releases ⌘, picking the highlighted app.
-        case appSwitchCommit
+        /// Brings the next (or previous) window on the cursor's screen to the front.
+        case switchWindow(forward: Bool)
+        /// The V ended; the next swipe starts from the current window order again.
+        case switchWindowEnd
     }
 
     enum Mode: Equatable, Sendable {
@@ -104,7 +104,7 @@ struct GestureStateMachine {
         case pressed
         case dragging
         case scrolling
-        case switchingApps
+        case switchingWindows
         case holding
     }
 
@@ -133,7 +133,7 @@ struct GestureStateMachine {
     private var swipeOrigin: (x: Double, time: TimeInterval)?
     private var settling = false
     private var lastSwipe: (time: TimeInterval, forward: Bool)?
-    private var isSwitcherOpen = false
+    private var isSwitching = false
 
     private var pinchFrames = 0
     private var releaseFrames = 0
@@ -212,7 +212,7 @@ struct GestureStateMachine {
         guard let features, features.anchor.y < config.activeMaxY else {
             var events: [Event] = []
             if isPressed { events += release() }
-            events += commitSwitcher()
+            events += endSwitching()
             resetTwoFingers()
             pointerReference = nil
             scrollReference = nil
@@ -314,7 +314,7 @@ struct GestureStateMachine {
     private mutating func deactivate() -> [Event] {
         var events: [Event] = []
         if isPressed { events += release() }
-        events += commitSwitcher()
+        events += endSwitching()
         resetTwoFingers()
         events.append(.deactivated)
         mode = .idle
@@ -341,8 +341,8 @@ struct GestureStateMachine {
             candidateFrames = 1
         }
         guard candidateFrames >= config.shapeFrames, candidateShape != stableShape else { return [] }
-        // Leaving the V picks the highlighted app.
-        let events = commitSwitcher()
+        // Leaving the V ends a window-switching session.
+        let events = endSwitching()
         resetTwoFingers()
         stableShape = candidateShape
         // Each shape starts from where the hand is now, so switching never jumps.
@@ -382,7 +382,7 @@ struct GestureStateMachine {
             let dy = (anchor.y - reference) * config.scrollGain
             return dy == 0 ? [] : [.scroll(dy: dy)]
         case .horizontal:
-            mode = .switchingApps
+            mode = .switchingWindows
             return swipeEvents(anchor: anchor, speed: speed, at: time)
         }
     }
@@ -407,14 +407,14 @@ struct GestureStateMachine {
             return []
         }
         lastSwipe = (time, forward)
-        isSwitcherOpen = true
-        return [.appSwitch(forward: forward)]
+        isSwitching = true
+        return [.switchWindow(forward: forward)]
     }
 
-    private mutating func commitSwitcher() -> [Event] {
-        guard isSwitcherOpen else { return [] }
-        isSwitcherOpen = false
-        return [.appSwitchCommit]
+    private mutating func endSwitching() -> [Event] {
+        guard isSwitching else { return [] }
+        isSwitching = false
+        return [.switchWindowEnd]
     }
 
     private mutating func resetTwoFingers() {

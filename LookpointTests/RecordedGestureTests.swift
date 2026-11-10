@@ -92,7 +92,7 @@ struct RecordedGestureTests {
         // The recording has no horizontal V swipes.
         let timeline = try recordedTimeline()
         #expect(!timeline.contains {
-            if case .appSwitch = $0.event { return true }
+            if case .switchWindow = $0.event { return true }
             return false
         })
     }
