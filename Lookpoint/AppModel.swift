@@ -35,6 +35,8 @@ final class AppModel {
     private(set) var isHandLabOpen = false
     /// Gesture state machine mode, for the UI.
     private(set) var gestureMode: GestureStateMachine.Mode = .idle
+    /// Whether gestures have turned voice input on (counted from our own right Alt toggles).
+    private(set) var isSpeaking = false
 
     let handLab = HandLab()
 
@@ -243,6 +245,7 @@ final class AppModel {
             for event in events { gestureOutput.perform(event) }
         }
         gestureMode = gestures.mode
+        isSpeaking = gestures.isSpeaking
         handLab.ingest(frame, features: features, events: events, mode: gestures.mode)
     }
 }

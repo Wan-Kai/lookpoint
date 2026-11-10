@@ -10,6 +10,7 @@ final class GestureOutput {
     private var scrollRemainder = 0.0
 
     private static let rightOptionKeyCode: CGKeyCode = 61
+    private static let returnKeyCode: CGKeyCode = 36
     // NX_DEVICERALTKEYMASK and NX_NONCOALSESCEDMASK: apps that tell left from right Option read these.
     private static let rightOptionDown = CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x40 | 0x100)
     private static let noModifiers = CGEventFlags(rawValue: 0x100)
@@ -32,6 +33,12 @@ final class GestureOutput {
             scroll(dy: dy)
         case .toggleRightOption:
             tapRightOption()
+        case .pressReturn:
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: source, virtualKey: Self.returnKeyCode, keyDown: down)
+                event?.flags = Self.noModifiers
+                event?.post(tap: .cghidEventTap)
+            }
         }
     }
 

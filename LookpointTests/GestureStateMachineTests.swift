@@ -283,6 +283,56 @@ struct GestureStateMachineTests {
         #expect(events.filter { $0 == .toggleRightOption }.count == 2)
     }
 
+    // MARK: Return after voice input
+
+    /// Starts voice input with one point-hold, then opens the hand.
+    private static func speaking() -> Replay {
+        var replay = Replay.active()
+        _ = replay.feed(repeated(25) { _ in point() } + repeated(10) { _ in open() })
+        return replay
+    }
+
+    @Test func holdingAfterStartingDoesNotPressReturn() {
+        var replay = Replay.active()
+        let events = replay.feed(repeated(120) { _ in point() })
+        #expect(events.filter { $0 == .toggleRightOption }.count == 1)
+        #expect(!events.contains(.pressReturn))
+    }
+
+    @Test func holdingAfterStoppingPressesReturn() {
+        var replay = Self.speaking()
+        _ = replay.feed(repeated(30) { _ in point() })
+        let toggle = replay.events.last { $0.event == .toggleRightOption }!
+        _ = replay.feed(repeated(60) { _ in point() })
+        let returns = replay.events.filter { $0.event == .pressReturn }
+        #expect(returns.count == 1)
+        #expect(abs(returns[0].time - toggle.time - 0.8) < 0.05)
+    }
+
+    @Test func changingShapeAfterStoppingSkipsReturn() {
+        var replay = Self.speaking()
+        // Stop fires around frame 21; open the hand 0.5 s later.
+        let events = replay.feed(repeated(36) { _ in point() } + repeated(30) { _ in open() })
+        #expect(events.contains(.toggleRightOption))
+        #expect(!events.contains(.pressReturn))
+    }
+
+    @Test func movingAfterStoppingSkipsReturn() {
+        var replay = Self.speaking()
+        let events = replay.feed(repeated(25) { _ in point() } + repeated(40) { point(1 + Double($0) * 0.003) })
+        #expect(events.contains(.toggleRightOption))
+        #expect(!events.contains(.pressReturn))
+    }
+
+    @Test func speakingSurvivesPuttingTheHandDown() {
+        var replay = Self.speaking()
+        _ = replay.feed(repeated(40) { _ in nil })
+        #expect(!replay.machine.isActive)
+        _ = replay.feed(repeated(15) { _ in open() })
+        let events = replay.feed(repeated(60) { _ in point() })
+        #expect(events.filter { $0 == .pressReturn }.count == 1)
+    }
+
     // MARK: Features
 
     @Test func shapesFromFingerRatios() {

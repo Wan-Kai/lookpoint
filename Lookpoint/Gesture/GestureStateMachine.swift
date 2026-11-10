@@ -11,7 +11,9 @@ import Foundation
 ///   A pinch only starts shortly after an open palm, so a fist (whose thumb
 ///   also touches the index finger) never clicks.
 /// - Two fingers (V): vertical hand movement scrolls, like a trackpad.
-/// - Point held still for `holdDuration`: toggle right Option.
+/// - Point held still for `holdDuration`: toggle right Option (voice input on/off).
+///   When that toggle ends voice input, keeping the point still another
+///   `enterDelay` presses Return, which also gives the text time to land.
 /// - Deactivate: hand gone for `lostTimeout`, or the user types.
 ///
 /// Every exit path releases a held button first.
@@ -55,6 +57,7 @@ struct GestureStateMachine {
         var holdDuration: TimeInterval = 0.6
         var holdTolerance = 0.02
         var holdCooldown: TimeInterval = 1.0
+        var enterDelay: TimeInterval = 0.8
 
         /// One-Euro on the palm anchor in frame heights.
         var filterMinCutoff = 1.5
@@ -71,6 +74,7 @@ struct GestureStateMachine {
         /// Screen points; positive when the hand moves down.
         case scroll(dy: Double)
         case toggleRightOption
+        case pressReturn
     }
 
     enum Mode: Equatable, Sendable {
@@ -115,6 +119,13 @@ struct GestureStateMachine {
     private var holdStart: (time: TimeInterval, anchor: SIMD2<Double>)?
     private var holdFired = false
     private var lastToggle = -TimeInterval.infinity
+    /// Whether our toggles have turned voice input on. Kept across sessions:
+    /// people put the hand down while speaking. Pressing right Alt on the
+    /// keyboard puts it out of step; the worst case is a Return right after
+    /// starting, into an empty field.
+    private(set) var isSpeaking = false
+    /// Set when a toggle ended voice input and the same hold may still send Return.
+    private var pendingReturn: TimeInterval?
 
     private static let epsilon = 1e-9
 
@@ -277,6 +288,7 @@ struct GestureStateMachine {
         scrollReference = nil
         holdStart = nil
         holdFired = false
+        pendingReturn = nil
         previous = nil
         pinchFrames = 0
         lastRelease = nil
@@ -301,6 +313,7 @@ struct GestureStateMachine {
         scrollReference = nil
         holdStart = nil
         holdFired = false
+        pendingReturn = nil
     }
 
     private mutating func moveEvents(to anchor: SIMD2<Double>, speed: Double) -> [Event] {
@@ -318,16 +331,23 @@ struct GestureStateMachine {
 
     private mutating func holdEvents(anchor: SIMD2<Double>, at time: TimeInterval) -> [Event] {
         if let start = holdStart, Self.length(anchor - start.anchor) <= config.holdTolerance {
+            if let stoppedAt = pendingReturn, time - stoppedAt + Self.epsilon >= config.enterDelay {
+                pendingReturn = nil
+                return [.pressReturn]
+            }
             guard !holdFired,
                   time - start.time + Self.epsilon >= config.holdDuration,
                   time - lastToggle + Self.epsilon >= config.holdCooldown
             else { return [] }
             holdFired = true
             lastToggle = time
+            isSpeaking.toggle()
+            if !isSpeaking { pendingReturn = time }
             return [.toggleRightOption]
         }
         // Started pointing, or moved too much: the hold restarts here.
         holdStart = (time, anchor)
+        pendingReturn = nil
         return []
     }
 

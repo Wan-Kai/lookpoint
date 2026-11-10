@@ -124,6 +124,8 @@ final class HandLab {
             case .toggleRightOption:
                 toggleCount += 1
                 text = "右 Alt 切换"
+            case .pressReturn:
+                text = "回车"
             }
             let stamp = Date.now.formatted(.dateTime.hour().minute().second())
             eventLog.insert("\(stamp)  \(text)", at: 0)
