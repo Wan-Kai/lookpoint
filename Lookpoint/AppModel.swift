@@ -11,6 +11,15 @@ final class AppModel {
         case running
         case denied
         case failed(String)
+        /// Off while the screen is locked or asleep; comes back by itself.
+        case paused
+    }
+
+    /// Why the camera is off although the user left it on.
+    private enum Suspension: Hashable {
+        case screenLocked
+        case screensAsleep
+        case systemAsleep
     }
 
     enum CalibrationOutcome: Equatable {
@@ -75,6 +84,9 @@ final class AppModel {
     @ObservationIgnored private var gestures = GestureStateMachine()
     @ObservationIgnored private let gestureOutput = GestureOutput()
     @ObservationIgnored private var accessibilityPoll: Task<Void, Never>?
+    @ObservationIgnored private var suspensions: Set<Suspension> = []
+    @ObservationIgnored private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    @ObservationIgnored private let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
     private var detectsHands: Bool { isHandLabOpen || gesturesEnabled }
 
@@ -93,8 +105,40 @@ final class AppModel {
         router.calibration = calibration
 
         // Hosted unit tests launch the app; keep the camera off there.
-        let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         if isEnabled && !isTesting { start() }
+        observeLockAndSleep()
+    }
+
+    /// Saves power: no camera or hand tracking while nobody can use the screen.
+    private func observeLockAndSleep() {
+        let distributed = DistributedNotificationCenter.default()
+        let workspace = NSWorkspace.shared.notificationCenter
+        let rules: [(NotificationCenter, Notification.Name, Suspension, Bool)] = [
+            (distributed, .init("com.apple.screenIsLocked"), .screenLocked, true),
+            (distributed, .init("com.apple.screenIsUnlocked"), .screenLocked, false),
+            (workspace, NSWorkspace.screensDidSleepNotification, .screensAsleep, true),
+            (workspace, NSWorkspace.screensDidWakeNotification, .screensAsleep, false),
+            (workspace, NSWorkspace.willSleepNotification, .systemAsleep, true),
+            (workspace, NSWorkspace.didWakeNotification, .systemAsleep, false),
+        ]
+        for (center, name, suspension, active) in rules {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setSuspended(suspension, active) }
+            }
+            observers.append((center, token))
+        }
+    }
+
+    private func setSuspended(_ suspension: Suspension, _ active: Bool) {
+        let wasSuspended = !suspensions.isEmpty
+        if active { suspensions.insert(suspension) } else { suspensions.remove(suspension) }
+        guard wasSuspended != !suspensions.isEmpty, isEnabled, !isTesting else { return }
+        if suspensions.isEmpty {
+            start()
+        } else {
+            stop()
+            cameraState = .paused
+        }
     }
 
     func requestAccessibility() {
@@ -171,6 +215,10 @@ final class AppModel {
 
     private func start() {
         guard pipeline == nil else { return }
+        guard suspensions.isEmpty else {
+            cameraState = .paused
+            return
+        }
         cameraState = .starting
         activity.start()
 

@@ -79,6 +79,7 @@ struct MenuContent: View {
     private var cameraText: String {
         switch model.cameraState {
         case .off: "已关闭"
+        case .paused: "已暂停（锁屏或睡眠中）"
         case .starting: "启动中…"
         case .running: "运行中"
         case .denied: "未授权"
