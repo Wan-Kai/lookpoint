@@ -14,6 +14,9 @@ import Foundation
 ///   Vertical scrolls, like a trackpad. A quick horizontal swipe switches to
 ///   the next (right) or previous (left) window on the cursor's screen; more
 ///   swipes in the same V keep stepping, and leaving the V ends the session.
+///   Swipes are strokes: runs of fast movement in one direction. A stroke
+///   that starts where the previous one ended and heads back to where it
+///   began is the hand returning, not a swipe the other way.
 /// - Point held still for `holdDuration`: toggle right Option (voice input on/off).
 ///   When that toggle ends voice input, keeping the point still another
 ///   `enterDelay` presses Return, which also gives the text time to land.
@@ -29,6 +32,8 @@ struct GestureStateMachine {
         /// While active, a hand lower than this counts as gone.
         var activeMaxY = 0.85
         var lostTimeout: TimeInterval = 0.5
+        /// Missing frames shorter than this keep every gesture going (motion blur in fast swipes).
+        var gapTolerance: TimeInterval = 0.25
 
         /// Frames a new shape must persist before it takes over.
         var shapeFrames = 3
@@ -61,13 +66,18 @@ struct GestureStateMachine {
         var axisDistance = 0.02
         /// Horizontal must beat vertical by this factor to count as a swipe.
         var axisRatio = 1.5
-        /// A swipe covers this distance within `swipeMaxDuration`.
+        /// A stroke starts above this horizontal speed (frame heights/s) and ends below `strokeEndSpeed`.
+        var strokeStartSpeed = 0.3
+        var strokeEndSpeed = 0.15
+        /// A stroke becomes a swipe once it covers this distance at this peak speed.
         var swipeDistance = 0.08
-        var swipeMaxDuration: TimeInterval = 0.35
-        /// After a swipe the hand must slow below this (frame heights/s) before the next one counts.
-        var settleSpeed = 0.25
-        /// The return stroke: an opposite swipe this soon after one is ignored.
-        var oppositeLockout: TimeInterval = 0.6
+        var swipePeakSpeed = 0.5
+        /// Strokes shorter than this are ignored entirely, also for return detection.
+        var minimumStroke = 0.04
+        /// A return starts within this distance of the previous stroke's end...
+        var returnStartTolerance = 0.06
+        /// ...and within this long after it.
+        var returnWindow: TimeInterval = 1.5
 
         var holdDuration: TimeInterval = 0.6
         var holdTolerance = 0.02
@@ -130,9 +140,18 @@ struct GestureStateMachine {
     private enum Axis { case undecided, vertical, horizontal }
     private var axis = Axis.undecided
     private var twoStart: SIMD2<Double>?
-    private var swipeOrigin: (x: Double, time: TimeInterval)?
-    private var settling = false
-    private var lastSwipe: (time: TimeInterval, forward: Bool)?
+    private struct Stroke {
+        var direction: Double
+        var startX: Double
+        var lastX: Double
+        var peakSpeed = 0.0
+        var isReturn: Bool
+        var fired = false
+    }
+    private var stroke: Stroke?
+    /// The last stroke long enough to count, for telling returns apart.
+    private var lastStroke: (direction: Double, startX: Double, endX: Double, end: TimeInterval, wasReturn: Bool)?
+    private var lastRawX: (x: Double, time: TimeInterval)?
     private var isSwitching = false
 
     private var pinchFrames = 0
@@ -210,6 +229,8 @@ struct GestureStateMachine {
 
     private mutating func updateActive(_ features: HandFeatures?, at time: TimeInterval) -> [Event] {
         guard let features, features.anchor.y < config.activeMaxY else {
+            // Short gaps (motion blur) keep everything as it is.
+            if time - lastSeen <= config.gapTolerance + Self.epsilon { return [] }
             var events: [Event] = []
             if isPressed { events += release() }
             events += endSwitching()
@@ -232,6 +253,7 @@ struct GestureStateMachine {
 
         if isPressed { return shapeEvents + updatePressed(features, anchor: anchor, speed: speed, at: time) }
         return shapeEvents + updateGestures(features, anchor: anchor, speed: speed, at: time)
+            + (stableShape == .two ? strokeEvents(rawX: features.anchor.x, at: time) : [])
     }
 
     private mutating func updateGestures(
@@ -357,7 +379,6 @@ struct GestureStateMachine {
     private mutating func twoFingerEvents(anchor: SIMD2<Double>, speed: Double, at time: TimeInterval) -> [Event] {
         guard let start = twoStart else {
             twoStart = anchor
-            swipeOrigin = (anchor.x, time)
             mode = .scrolling
             return []
         }
@@ -382,33 +403,60 @@ struct GestureStateMachine {
             let dy = (anchor.y - reference) * config.scrollGain
             return dy == 0 ? [] : [.scroll(dy: dy)]
         case .horizontal:
+            // Swipes come from `strokeEvents`, which runs for every V frame.
             mode = .switchingWindows
-            return swipeEvents(anchor: anchor, speed: speed, at: time)
+            return []
         }
     }
 
-    private mutating func swipeEvents(anchor: SIMD2<Double>, speed: Double, at time: TimeInterval) -> [Event] {
-        if settling {
-            guard speed < config.settleSpeed else { return [] }
-            settling = false
-            swipeOrigin = (anchor.x, time)
-            return []
+    /// Tracks horizontal strokes on the raw palm position (the filter would
+    /// blunt their speed) and fires a switch when one qualifies.
+    private mutating func strokeEvents(rawX x: Double, at time: TimeInterval) -> [Event] {
+        defer { lastRawX = (x, time) }
+        guard let previous = lastRawX, time > previous.time else { return [] }
+        let velocity = (x - previous.x) / (time - previous.time)
+
+        if var current = stroke {
+            if velocity * current.direction >= config.strokeEndSpeed {
+                current.lastX = x
+                current.peakSpeed = max(current.peakSpeed, abs(velocity))
+                stroke = current
+                return fireIfSwipe()
+            }
+            endStroke(at: time)
         }
-        guard let origin = swipeOrigin, time - origin.time <= config.swipeMaxDuration + Self.epsilon else {
-            // Too slow to be a swipe: start measuring from here.
-            swipeOrigin = (anchor.x, time)
-            return []
-        }
-        let dx = anchor.x - origin.x
-        guard abs(dx) >= config.swipeDistance else { return [] }
-        let forward = dx > 0
-        settling = true
-        if let last = lastSwipe, last.forward != forward, time - last.time < config.oppositeLockout {
-            return []
-        }
-        lastSwipe = (time, forward)
+        guard abs(velocity) >= config.strokeStartSpeed else { return [] }
+
+        let direction: Double = velocity > 0 ? 1 : -1
+        // Back from where the last real stroke ended, toward where it began.
+        let isReturn = lastStroke.map {
+            !$0.wasReturn
+                && $0.direction == -direction
+                && time - $0.end <= config.returnWindow
+                && abs(previous.x - $0.endX) <= config.returnStartTolerance
+        } ?? false
+        stroke = Stroke(direction: direction, startX: previous.x, lastX: x, peakSpeed: abs(velocity), isReturn: isReturn)
+        return fireIfSwipe()
+    }
+
+    private mutating func fireIfSwipe() -> [Event] {
+        guard var current = stroke, !current.fired, !current.isReturn, axis != .vertical,
+              abs(current.lastX - current.startX) >= config.swipeDistance,
+              current.peakSpeed >= config.swipePeakSpeed
+        else { return [] }
+        current.fired = true
+        stroke = current
+        axis = .horizontal
+        mode = .switchingWindows
+        scrollReference = nil
         isSwitching = true
-        return [.switchWindow(forward: forward)]
+        return [.switchWindow(forward: current.direction > 0)]
+    }
+
+    private mutating func endStroke(at time: TimeInterval) {
+        defer { stroke = nil }
+        guard let current = stroke, abs(current.lastX - current.startX) >= config.minimumStroke else { return }
+        lastStroke = (current.direction, current.startX, current.lastX, time, current.isReturn)
     }
 
     private mutating func endSwitching() -> [Event] {
@@ -420,9 +468,9 @@ struct GestureStateMachine {
     private mutating func resetTwoFingers() {
         axis = .undecided
         twoStart = nil
-        swipeOrigin = nil
-        settling = false
-        lastSwipe = nil
+        stroke = nil
+        lastStroke = nil
+        lastRawX = nil
     }
 
     private mutating func moveEvents(to anchor: SIMD2<Double>, speed: Double) -> [Event] {

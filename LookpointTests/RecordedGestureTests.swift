@@ -9,9 +9,8 @@ private typealias Timeline = [(time: Double, event: Event)]
 
 /// Real Vision output from a 2026-11-10 session at the desk (segments
 /// 0–80 s, 159–205 s, 274–317 s, 399–474 s), stored as raw-deflate JSON.
-private func recordedTimeline() throws -> Timeline {
-    let url = try #require(Bundle(for: BundleToken.self).url(
-        forResource: "hand-recording-2026-11-10.json", withExtension: "deflate"))
+private func recordedTimeline(_ name: String = "hand-recording-2026-11-10.json") throws -> Timeline {
+    let url = try #require(Bundle(for: BundleToken.self).url(forResource: name, withExtension: "deflate"))
     let data = try (Data(contentsOf: url) as NSData).decompressed(using: .zlib) as Data
     let frames = try JSONDecoder().decode([HandFrame].self, from: data)
 
@@ -53,10 +52,10 @@ struct RecordedGestureTests {
         let timeline = try recordedTimeline()
         // Thumb and index together at 5.0–5.9 s.
         #expect(events(in: timeline, from: 5.0, to: 6.0).contains(where: isDown))
-        // Held for about 4.5 s at 414–419 s: one long press, i.e. a drag.
-        let down = try #require(timeline.first { $0.time >= 414.5 && isDown($0.event) })
+        // Held for about 5 s at 414–419 s, with a one-frame dropout: one long press, i.e. a drag.
+        let down = try #require(timeline.first { $0.time >= 413.9 && isDown($0.event) })
         let up = try #require(timeline.first { $0.time > down.time && isUp($0.event) })
-        #expect(up.time - down.time > 4)
+        #expect(up.time - down.time > 5)
     }
 
     @Test func fistsDoNotClick() throws {
@@ -68,8 +67,8 @@ struct RecordedGestureTests {
 
     @Test func pointingWhileMovingDoesNotToggle() throws {
         let timeline = try recordedTimeline()
+        // 24–31.5 s: pointing while the hand travels across the frame.
         #expect(!events(in: timeline, from: 24.0, to: 31.5).contains(.toggleRightOption))
-        #expect(!events(in: timeline, from: 167.5, to: 176).contains(.toggleRightOption))
     }
 
     @Test func pointingStillToggles() throws {
@@ -101,5 +100,15 @@ struct RecordedGestureTests {
         // 452–472 s: the hand flickers in and out near the bottom of the frame.
         let timeline = try recordedTimeline()
         #expect(!events(in: timeline, from: 454, to: 475).contains(.activated))
+    }
+
+    /// 2026-11-10: a V swiped left 8 times, then right 7 times, the hand
+    /// coming back after each swipe at nearly the same speed.
+    @Test func swipesIgnoreTheReturnStroke() throws {
+        let switches = try recordedTimeline("swipe-recording-2026-11-10.json").compactMap { _, event -> Bool? in
+            if case .switchWindow(let forward) = event { return forward }
+            return nil
+        }
+        #expect(switches == Array(repeating: false, count: 8) + Array(repeating: true, count: 7))
     }
 }

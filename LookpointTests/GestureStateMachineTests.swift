@@ -118,9 +118,12 @@ struct GestureStateMachineTests {
     @Test func losingTheHandReleasesThenDeactivates() {
         var replay = Replay.active()
         _ = replay.feed(repeated(3) { _ in open() } + repeated(3) { _ in pinch() })
-        #expect(replay.feed([nil]) == [.leftUp(clickCount: 1)])
-        // Gone longer than 0.5 s.
-        #expect(replay.feed(repeated(16) { _ in nil }) == [.deactivated])
+        // A few missing frames (motion blur) keep the button down...
+        #expect(replay.feed(repeated(7) { _ in nil }).isEmpty)
+        // ...longer than 0.25 s releases it...
+        #expect(replay.feed(repeated(2) { _ in nil }) == [.leftUp(clickCount: 1)])
+        // ...and gone longer than 0.5 s deactivates.
+        #expect(replay.feed(repeated(9) { _ in nil }) == [.deactivated])
         #expect(!replay.machine.isActive)
     }
 
@@ -318,10 +321,43 @@ struct GestureStateMachineTests {
         #expect(scrolled(events) > 300)
     }
 
-    @Test func losingTheHandCommitsTheSwitch() {
+    @Test func losingTheHandEndsTheSwitch() {
         var replay = Replay.active()
         _ = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true))
-        #expect(replay.feed([nil]) == [.switchWindowEnd])
+        #expect(replay.feed(repeated(7) { _ in nil }).isEmpty)
+        #expect(replay.feed(repeated(2) { _ in nil }) == [.switchWindowEnd])
+    }
+
+    @Test func blurredFramesMidSwipeKeepTheSwipe() {
+        var replay = Replay.active()
+        let blurred: [HandFeatures?] = [two(1.02), two(1.04), nil, nil, nil, two(1.12), two(1.14)]
+        let events = replay.feed(repeated(4) { _ in two() } + blurred + repeated(5) { _ in two(1.14) })
+        #expect(Self.switches(events) == [.switchWindow(forward: true)])
+    }
+
+    @Test func returnAfterAPauseIsStillAReturn() {
+        var replay = Replay.active()
+        // Swipe right, rest 0.8 s out there, then bring the hand back.
+        let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
+            + repeated(24) { _ in two(1.12) } + Self.swipe(from: 1.12, forward: false) + repeated(5) { _ in two() })
+        #expect(Self.switches(events) == [.switchWindow(forward: true)])
+    }
+
+    @Test func deliberateReverseAfterTheReturnWindowSwitches() {
+        var replay = Replay.active()
+        // Swipe right, stay out there 2 s, then swipe left on purpose.
+        let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
+            + repeated(60) { _ in two(1.12) } + Self.swipe(from: 1.12, forward: false) + repeated(5) { _ in two(1) })
+        #expect(Self.switches(events) == [.switchWindow(forward: true), .switchWindow(forward: false)])
+    }
+
+    @Test func swipeLeftAfterReturningFromARightSwipe() {
+        var replay = Replay.active()
+        // Right, back home, then a real left swipe from home.
+        let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
+            + Self.swipe(from: 1.12, forward: false) + repeated(8) { _ in two(1) } + Self.swipe(from: 1, forward: false)
+            + repeated(5) { _ in two(0.88) })
+        #expect(Self.switches(events) == [.switchWindow(forward: true), .switchWindow(forward: false)])
     }
 
     @Test func typingCommitsTheSwitch() {
