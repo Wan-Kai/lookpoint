@@ -20,7 +20,10 @@ final class UserActivityMonitor {
             .keyDown, .mouseMoved, .scrollWheel,
             .leftMouseDown, .leftMouseDragged, .rightMouseDown, .rightMouseDragged,
         ]
+        let ownPID = Int64(ProcessInfo.processInfo.processIdentifier)
         monitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            // Keys and mouse moves that gestures post are not the user typing.
+            if event.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) == ownPID { return }
             let timestamp = event.timestamp
             let isKey = event.type == .keyDown
             MainActor.assumeIsolated {
