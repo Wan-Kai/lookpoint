@@ -24,6 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var calibrationWindow: NSWindow?
     private var handLabWindow: NSWindow?
 
+    func applicationWillTerminate(_ notification: Notification) {
+        model.stopGestures()
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showStatus()
         return false

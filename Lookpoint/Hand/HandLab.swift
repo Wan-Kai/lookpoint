@@ -1,15 +1,11 @@
 import AppKit
 import Observation
 
-/// Step-3 experiment: shows how steady and how reliable hand tracking is in
-/// real conditions, to decide between Vision and a MediaPipe Core ML model.
-/// Can record frames to JSON for the gesture state machine's tests.
+/// Hand tracking lab: shows tracking quality, the hand shape and what the
+/// gesture state machine does with it. Can record frames to JSON for tests.
 @MainActor
 @Observable
 final class HandLab {
-    /// Thumb tip–index tip distance (normalized frame units) to enter / leave a pinch.
-    static let pinchOn = 0.055
-    static let pinchOff = 0.085
     /// Fingertips below this confidence count as "no hand".
     static let minimumConfidence = 0.3
 
@@ -20,11 +16,15 @@ final class HandLab {
     /// Mirrored, normalized (0...1) positions for drawing, newest last.
     private(set) var rawTrail: [CGPoint] = []
     private(set) var filteredTrail: [CGPoint] = []
-    /// Pinch distance per frame, nil when no hand. Newest last.
+    /// Thumb–index distance over palm length per frame, nil when no hand. Newest last.
     private(set) var pinchHistory: [Double?] = []
-    private(set) var pinchRatio: Double?
-    private(set) var isPinching = false
-    private(set) var pinchCount = 0
+    private(set) var features: HandFeatures?
+    private(set) var mode: GestureStateMachine.Mode = .idle
+    /// Newest first.
+    private(set) var eventLog: [String] = []
+    private(set) var clickCount = 0
+    private(set) var scrollDistance = 0.0
+    private(set) var toggleCount = 0
 
     private(set) var framesPerSecond = 0
     private(set) var handRate = 0.0
@@ -43,9 +43,13 @@ final class HandLab {
     @ObservationIgnored private var yFilter = OneEuroFilter(minCutoff: 1.0, beta: 0.007)
     @ObservationIgnored private var recording: [HandFrame] = []
 
-    func ingest(_ frame: HandFrame) {
+    func ingest(_ frame: HandFrame, features: HandFeatures?, events: [GestureStateMachine.Event], mode: GestureStateMachine.Mode) {
         if isRecording { recording.append(frame) }
         updateRates(with: frame)
+        self.features = features
+        self.mode = mode
+        log(events)
+        append(features?.indexPinch, to: &pinchHistory, limit: Self.pinchHistoryLength)
 
         landmarks = frame.landmarks
         guard let hand = frame.landmarks,
@@ -57,8 +61,6 @@ final class HandLab {
             recentTips.removeAll()
             rawJitter = nil
             filteredJitter = nil
-            pinchRatio = nil
-            append(nil, to: &pinchHistory, limit: Self.pinchHistoryLength)
             return
         }
 
@@ -78,20 +80,13 @@ final class HandLab {
             rawJitter = Self.spread(recentTips.map(\.raw))
             filteredJitter = Self.spread(recentTips.map(\.filtered))
         }
-
-        let distance = hand.pinchDistance
-        pinchRatio = hand.pinchRatio
-        append(distance, to: &pinchHistory, limit: Self.pinchHistoryLength)
-        if !isPinching && distance < Self.pinchOn {
-            isPinching = true
-            pinchCount += 1
-        } else if isPinching && distance > Self.pinchOff {
-            isPinching = false
-        }
     }
 
     func resetCounters() {
-        pinchCount = 0
+        clickCount = 0
+        scrollDistance = 0
+        toggleCount = 0
+        eventLog.removeAll()
         rawTrail.removeAll()
         filteredTrail.removeAll()
         pinchHistory.removeAll()
@@ -110,6 +105,30 @@ final class HandLab {
 
     func revealLastRecording() {
         if let lastRecordingURL { NSWorkspace.shared.activateFileViewerSelecting([lastRecordingURL]) }
+    }
+
+    private func log(_ events: [GestureStateMachine.Event]) {
+        for event in events {
+            let text: String
+            switch event {
+            case .activated: text = "激活"
+            case .deactivated: text = "退出"
+            case .move: continue
+            case .leftDown(let n):
+                clickCount += 1
+                text = n > 1 ? "左键按下 ×\(n)" : "左键按下"
+            case .leftUp: text = "左键抬起"
+            case .scroll(let dy):
+                scrollDistance += abs(dy)
+                continue
+            case .toggleRightOption:
+                toggleCount += 1
+                text = "右 Option 切换"
+            }
+            let stamp = Date.now.formatted(.dateTime.hour().minute().second())
+            eventLog.insert("\(stamp)  \(text)", at: 0)
+            if eventLog.count > 12 { eventLog.removeLast() }
+        }
     }
 
     private func updateRates(with frame: HandFrame) {
@@ -156,27 +175,5 @@ final class HandLab {
         let cy = points.map(\.y).reduce(0, +) / n
         let variance = points.map { ($0.x - cx) * ($0.x - cx) + ($0.y - cy) * ($0.y - cy) }.reduce(0, +) / n
         return variance.squareRoot()
-    }
-}
-
-extension HandLandmarks {
-    /// Thumb tip to index tip in normalized frame units (as MediaPipe-based
-    /// projects measure it). Shrinks as the hand moves away from the camera.
-    var pinchDistance: Double {
-        let d = self[.thumbTip] - self[.indexTip]
-        return (d.x * d.x + d.y * d.y).squareRoot()
-    }
-
-    /// Pinch distance divided by palm length (wrist → middle MCP), both
-    /// aspect-corrected. Roughly independent of distance to the camera.
-    var pinchRatio: Double? {
-        let palm = Self.aspectCorrectedLength(self[.middleMCP] - self[.wrist])
-        guard palm > 0 else { return nil }
-        return Self.aspectCorrectedLength(self[.thumbTip] - self[.indexTip]) / palm
-    }
-
-    private static func aspectCorrectedLength(_ v: SIMD2<Double>) -> Double {
-        let x = v.x * frameAspect
-        return (x * x + v.y * v.y).squareRoot()
     }
 }

@@ -1,0 +1,94 @@
+import Foundation
+import Testing
+@testable import Lookpoint
+
+private final class BundleToken {}
+
+private typealias Event = GestureStateMachine.Event
+private typealias Timeline = [(time: Double, event: Event)]
+
+/// Real Vision output from a 2026-11-10 session at the desk (segments
+/// 0–80 s, 159–205 s, 274–317 s, 399–474 s), stored as raw-deflate JSON.
+private func recordedTimeline() throws -> Timeline {
+    let url = try #require(Bundle(for: BundleToken.self).url(
+        forResource: "hand-recording-2026-11-10.json", withExtension: "deflate"))
+    let data = try (Data(contentsOf: url) as NSData).decompressed(using: .zlib) as Data
+    let frames = try JSONDecoder().decode([HandFrame].self, from: data)
+
+    var machine = GestureStateMachine()
+    var timeline: Timeline = []
+    for frame in frames {
+        let features = frame.landmarks.flatMap(HandFeatures.init)
+        timeline += machine.update(features, at: frame.time).map { (frame.time, $0) }
+    }
+    return timeline
+}
+
+private func events(in timeline: Timeline, from start: Double, to end: Double) -> [Event] {
+    timeline.filter { $0.time >= start && $0.time < end }.map(\.event)
+}
+
+private func isDown(_ event: Event) -> Bool {
+    if case .leftDown = event { return true }
+    return false
+}
+
+private func isUp(_ event: Event) -> Bool {
+    if case .leftUp = event { return true }
+    return false
+}
+
+struct RecordedGestureTests {
+    @Test func buttonIsAlwaysReleased() throws {
+        var pressed = false
+        for (_, event) in try recordedTimeline() {
+            if isDown(event) { #expect(!pressed); pressed = true }
+            if isUp(event) { #expect(pressed); pressed = false }
+            if event == .deactivated { #expect(!pressed) }
+        }
+        #expect(!pressed)
+    }
+
+    @Test func pinchesClick() throws {
+        let timeline = try recordedTimeline()
+        // Thumb and index together at 5.0–5.9 s.
+        #expect(events(in: timeline, from: 5.0, to: 6.0).contains(where: isDown))
+        // Held for about 4.5 s at 414–419 s: one long press, i.e. a drag.
+        let down = try #require(timeline.first { $0.time >= 414.5 && isDown($0.event) })
+        let up = try #require(timeline.first { $0.time > down.time && isUp($0.event) })
+        #expect(up.time - down.time > 4)
+    }
+
+    @Test func fistsDoNotClick() throws {
+        let timeline = try recordedTimeline()
+        for start in [10.4, 163.5, 276.8] {
+            #expect(!events(in: timeline, from: start, to: start + 1).contains(where: isDown))
+        }
+    }
+
+    @Test func pointingWhileMovingDoesNotToggle() throws {
+        let timeline = try recordedTimeline()
+        #expect(!events(in: timeline, from: 24.0, to: 31.5).contains(.toggleRightOption))
+        #expect(!events(in: timeline, from: 167.5, to: 176).contains(.toggleRightOption))
+    }
+
+    @Test func pointingStillToggles() throws {
+        let timeline = try recordedTimeline()
+        let toggles = events(in: timeline, from: 436, to: 452).filter { $0 == .toggleRightOption }
+        #expect((2...4).contains(toggles.count))
+    }
+
+    @Test func twoFingersScroll() throws {
+        let timeline = try recordedTimeline()
+        #expect(events(in: timeline, from: 436, to: 445).contains {
+            if case .scroll = $0 { return true }
+            return false
+        })
+    }
+
+    @Test func handLowInTheFrameStaysIdle() throws {
+        // 452–472 s: the hand flickers in and out near the bottom of the frame.
+        let timeline = try recordedTimeline()
+        #expect(!events(in: timeline, from: 454, to: 475).contains(.activated))
+    }
+}

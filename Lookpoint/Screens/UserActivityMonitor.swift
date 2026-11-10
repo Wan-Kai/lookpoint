@@ -11,6 +11,7 @@ final class UserActivityMonitor {
     var grace: TimeInterval = 1.5
 
     private var lastInput = -TimeInterval.infinity
+    private var lastKey = -TimeInterval.infinity
     private var monitor: Any?
 
     func start() {
@@ -21,7 +22,11 @@ final class UserActivityMonitor {
         ]
         monitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             let timestamp = event.timestamp
-            MainActor.assumeIsolated { self?.lastInput = timestamp }
+            let isKey = event.type == .keyDown
+            MainActor.assumeIsolated {
+                self?.lastInput = timestamp
+                if isKey { self?.lastKey = timestamp }
+            }
         }
     }
 
@@ -33,5 +38,10 @@ final class UserActivityMonitor {
     /// `time` uses the same clock as `NSEvent.timestamp` (`ProcessInfo.systemUptime`).
     func isActive(at time: TimeInterval) -> Bool {
         time - lastInput < grace
+    }
+
+    /// Keyboard only: gestures post mouse events themselves, so those must not count.
+    func isTyping(at time: TimeInterval) -> Bool {
+        time - lastKey < grace
     }
 }

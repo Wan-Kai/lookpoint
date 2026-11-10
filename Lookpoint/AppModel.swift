@@ -33,8 +33,23 @@ final class AppModel {
     private(set) var hasAccessibility = AXIsProcessTrusted()
     private(set) var isCalibrating = false
     private(set) var isHandLabOpen = false
+    /// Gesture state machine mode, for the UI.
+    private(set) var gestureMode: GestureStateMachine.Mode = .idle
 
     let handLab = HandLab()
+
+    /// Hand gestures drive the real mouse and keyboard. Off: the hand lab still
+    /// runs the state machine and shows what it would do (dry run).
+    var gesturesEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(gesturesEnabled, forKey: Keys.gestures)
+            if gesturesEnabled { requestAccessibility() } else { stopGestures() }
+            pipeline?.detectsHands = detectsHands
+        }
+    }
+
+    /// Events are only posted with Accessibility; without it the gestures dry-run.
+    var gesturesLive: Bool { gesturesEnabled && hasAccessibility }
 
     var calibration: HeadPose? {
         didSet {
@@ -55,15 +70,22 @@ final class AppModel {
     @ObservationIgnored private let activity = UserActivityMonitor()
     @ObservationIgnored private var pipeline: CameraPipeline?
     @ObservationIgnored private var calibrationSamples: [HeadPose]?
+    @ObservationIgnored private var gestures = GestureStateMachine()
+    @ObservationIgnored private let gestureOutput = GestureOutput()
+    @ObservationIgnored private var accessibilityPoll: Task<Void, Never>?
+
+    private var detectsHands: Bool { isHandLabOpen || gesturesEnabled }
 
     private enum Keys {
         static let enabled = "enabled"
         static let calibration = "secondaryCalibration"
+        static let gestures = "gesturesEnabled"
     }
 
     init() {
         let defaults = UserDefaults.standard
         isEnabled = defaults.object(forKey: Keys.enabled) as? Bool ?? true
+        gesturesEnabled = defaults.bool(forKey: Keys.gestures)
         calibration = defaults.data(forKey: Keys.calibration)
             .flatMap { try? JSONDecoder().decode(HeadPose?.self, from: $0) }
         router.calibration = calibration
@@ -76,6 +98,26 @@ final class AppModel {
     func requestAccessibility() {
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         hasAccessibility = AXIsProcessTrustedWithOptions(options)
+        guard !hasAccessibility, accessibilityPoll == nil else { return }
+        // There is no notification for the grant; check until it arrives.
+        accessibilityPoll = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self else { return }
+                if AXIsProcessTrusted() {
+                    self.hasAccessibility = true
+                    self.accessibilityPoll = nil
+                    return
+                }
+            }
+        }
+    }
+
+    /// Releases anything gestures hold. Call before quitting.
+    func stopGestures() {
+        for event in gestures.reset() where gesturesLive { gestureOutput.perform(event) }
+        gestureOutput.releaseButton()
+        gestureMode = gestures.mode
     }
 
     func refreshPermissions() {
@@ -111,7 +153,7 @@ final class AppModel {
     /// Runs hand detection for the hand lab; head pose does not switch screens meanwhile.
     func setHandLabOpen(_ value: Bool) {
         isHandLabOpen = value
-        pipeline?.detectsHands = value
+        pipeline?.detectsHands = detectsHands
     }
 
     private func start() {
@@ -125,10 +167,10 @@ final class AppModel {
                 Task { @MainActor in self?.handle(pose, at: time) }
             },
             onHand: { [weak self] frame in
-                Task { @MainActor in self?.handLab.ingest(frame) }
+                Task { @MainActor in self?.handle(frame) }
             }
         )
-        pipeline.detectsHands = isHandLabOpen
+        pipeline.detectsHands = detectsHands
         self.pipeline = pipeline
 
         Task {
@@ -149,6 +191,7 @@ final class AppModel {
     }
 
     private func stop() {
+        stopGestures()
         pipeline?.stop()
         pipeline = nil
         activity.stop()
@@ -177,10 +220,24 @@ final class AppModel {
         pose = smoothed
         calibrationSamples?.append(smoothed)
 
-        let suppressed = isCalibrating || isHandLabOpen || activity.isActive(at: time)
+        // While a gesture is active the screen stays put, or it would chase the cursor.
+        let suppressed = isCalibrating || isHandLabOpen || gestures.isActive || activity.isActive(at: time)
         if let role = router.update(pose: smoothed, at: time, suppressed: suppressed) {
             activeScreen = role
             switcher.move(to: role)
         }
+    }
+
+    private func handle(_ frame: HandFrame) {
+        guard pipeline != nil else { return }
+        let features = frame.landmarks.flatMap(HandFeatures.init)
+        let events = detectsHands
+            ? gestures.update(features, at: frame.time, typing: activity.isTyping(at: frame.time))
+            : []
+        if gesturesLive {
+            for event in events { gestureOutput.perform(event) }
+        }
+        gestureMode = gestures.mode
+        handLab.ingest(frame, features: features, events: events, mode: gestures.mode)
     }
 }

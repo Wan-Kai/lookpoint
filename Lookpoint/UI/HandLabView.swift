@@ -1,8 +1,10 @@
 import SwiftUI
 
 struct HandLabView: View {
-    var model: AppModel
+    @Bindable var model: AppModel
     var lab: HandLab
+
+    private var isPressed: Bool { lab.mode == .pressed || lab.mode == .dragging }
 
     private static let bones: [(HandLandmarks.Joint, HandLandmarks.Joint)] = [
         (.wrist, .thumbCMC), (.thumbCMC, .thumbMCP), (.thumbMCP, .thumbIP), (.thumbIP, .thumbTip),
@@ -59,9 +61,9 @@ struct HandLabView: View {
             drawTrail(lab.filteredTrail.map(point), color: .green, in: &context)
 
             if let tip = lab.filteredTrail.last.map(point) {
-                let r: CGFloat = lab.isPinching ? 16 : 10
+                let r: CGFloat = isPressed ? 16 : 10
                 context.fill(Path(ellipseIn: CGRect(x: tip.x - r, y: tip.y - r, width: 2 * r, height: 2 * r)),
-                             with: .color(lab.isPinching ? .yellow : .green))
+                             with: .color(isPressed ? .yellow : .green))
             }
         }
     }
@@ -81,15 +83,16 @@ struct HandLabView: View {
         return CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2, width: width, height: height)
     }
 
-    // MARK: Pinch distance over the last ~5 s
+    // MARK: Pinch ratio (thumb–index over palm length) over the last ~5 s
 
     private var pinchGraph: some View {
         Canvas { context, size in
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(white: 0.1)))
-            let maxValue = 0.25
+            let maxValue = 1.5
+            let config = GestureStateMachine.Config()
             func y(_ value: Double) -> CGFloat { size.height * (1 - min(value, maxValue) / maxValue) }
 
-            for (threshold, label) in [(HandLab.pinchOn, "on 0.055"), (HandLab.pinchOff, "off 0.085")] {
+            for (threshold, label) in [(config.pinchOn, "按下 \(config.pinchOn)"), (config.pinchOff, "抬起 \(config.pinchOff)")] {
                 var line = Path()
                 line.move(to: CGPoint(x: 0, y: y(threshold)))
                 line.addLine(to: CGPoint(x: size.width, y: y(threshold)))
@@ -122,22 +125,40 @@ struct HandLabView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            Toggle("手势接管鼠标和键盘", isOn: $model.gesturesEnabled)
+                .toggleStyle(.switch)
+            Text(modeNote)
+                .font(.caption)
+                .foregroundStyle(model.gesturesLive ? .green : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+                row("手势状态", modeText)
+                row("手形", shapeText)
+                row("捏合比", lab.features.map { String(format: "%.2f", $0.indexPinch) } ?? "—")
+                row("无名/小指", lab.features.map { String(format: "%.2f", $0.ringLittleRatio) } ?? "—")
+                Divider().gridCellUnsizedAxes(.horizontal)
+                row("点击次数", "\(lab.clickCount)")
+                row("滚动距离", String(format: "%.0f pt", lab.scrollDistance))
+                row("右 Option", "\(lab.toggleCount) 次")
+                Divider().gridCellUnsizedAxes(.horizontal)
                 row("检测帧率", "\(lab.framesPerSecond) fps")
                 row("识别到手", String(format: "%.0f%%", lab.handRate * 100))
                 row("单帧耗时", String(format: "%.1f ms", lab.latencyMilliseconds))
                 Divider().gridCellUnsizedAxes(.horizontal)
                 row("抖动 原始", lab.rawJitter.map { String(format: "%.1f pt", $0) } ?? "—")
                 row("抖动 滤波后", lab.filteredJitter.map { String(format: "%.1f pt", $0) } ?? "—")
-                Divider().gridCellUnsizedAxes(.horizontal)
-                row("捏合距离", lab.pinchHistory.last.flatMap { $0 }.map { String(format: "%.3f", $0) } ?? "—")
-                row("捏合/掌长", lab.pinchRatio.map { String(format: "%.2f", $0) } ?? "—")
-                row("捏合状态", lab.isPinching ? "捏合中" : "松开")
-                row("捏合次数", "\(lab.pinchCount)")
             }
             .font(.callout.monospacedDigit())
 
-            Text("红线是原始指尖轨迹，绿线是 One-Euro 滤波后的轨迹。抖动是最近 0.5 秒指尖的离散程度，换算成主屏上的点数，手静止时看才有意义。")
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(lab.eventLog.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                }
+            }
+            .font(.caption.monospacedDigit())
+
+            Text("张开手掌 0.4 秒激活 · 张开平移=移动 · 捏=点击/拖拽 · 双指(V)上下=滚动 · 单指指向静止 0.6 秒=右 Option · 其他手形=停住。红线/绿线是食指尖的原始/滤波轨迹。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -158,6 +179,35 @@ struct HandLabView: View {
             }
         }
         .padding(16)
+    }
+
+    private var modeNote: String {
+        if model.gesturesLive { return "接管中：手势会真正移动鼠标、点击和按键。" }
+        if model.gesturesEnabled { return "等待辅助功能权限，授权前只空跑。" }
+        return "空跑：只显示会发出什么事件，不碰鼠标键盘。"
+    }
+
+    private var modeText: String {
+        switch lab.mode {
+        case .idle: "未激活"
+        case .activating: "激活中…"
+        case .moving: "移动"
+        case .frozen: "停住"
+        case .pressed: "按下"
+        case .dragging: "拖拽"
+        case .scrolling: "滚动"
+        case .holding: "指向（保持触发右 Option）"
+        }
+    }
+
+    private var shapeText: String {
+        switch lab.features?.shape {
+        case nil: "—"
+        case .open: "张开"
+        case .point: "单指指向"
+        case .two: "双指"
+        case .other: "其他"
+        }
     }
 
     private func row(_ title: String, _ value: String) -> some View {

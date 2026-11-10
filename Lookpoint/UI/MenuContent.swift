@@ -9,6 +9,9 @@ struct MenuContent: View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("按头部朝向切换屏幕", isOn: $model.isEnabled)
                 .toggleStyle(.switch)
+            Toggle("手势控制鼠标", isOn: $model.gesturesEnabled)
+                .toggleStyle(.switch)
+                .disabled(!model.isEnabled)
 
             Divider()
 
@@ -24,6 +27,10 @@ struct MenuContent: View {
                 GridRow {
                     Text("当前屏幕").foregroundStyle(.secondary)
                     Text(model.activeScreen == .primary ? "主屏" : "副屏")
+                }
+                GridRow {
+                    Text("手势").foregroundStyle(.secondary)
+                    Text(gestureText)
                 }
                 GridRow {
                     Text("副屏校准").foregroundStyle(.secondary)
@@ -49,7 +56,7 @@ struct MenuContent: View {
                     model.requestAccessibility()
                     openSettings("Privacy_Accessibility")
                 }
-                Text("用于在你打字时暂停切换；后续手势控制鼠标也需要它。")
+                Text("手势控制鼠标、打字时暂停都需要它。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -83,6 +90,12 @@ struct MenuContent: View {
         guard model.cameraState == .running else { return "—" }
         guard let pose = model.pose else { return "未检测到人脸" }
         return String(format: "yaw %+.1f°  pitch %+.1f°", pose.yaw, pose.pitch)
+    }
+
+    private var gestureText: String {
+        guard model.gesturesEnabled else { return "已关闭" }
+        guard model.hasAccessibility else { return "等待辅助功能权限" }
+        return model.gestureMode == .idle || model.gestureMode == .activating ? "待命（张开手掌激活）" : "接管中"
     }
 
     private var calibrationText: String {
