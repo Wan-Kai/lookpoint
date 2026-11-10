@@ -113,6 +113,11 @@ final class AppModel {
         }
     }
 
+    /// Sends one right Alt tap now, to check what the voice-input app does with it.
+    func testRightAlt() {
+        gestureOutput.perform(.toggleRightOption)
+    }
+
     /// Releases anything gestures hold. Call before quitting.
     func stopGestures() {
         for event in gestures.reset() where gesturesLive { gestureOutput.perform(event) }

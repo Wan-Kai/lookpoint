@@ -24,6 +24,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var calibrationWindow: NSWindow?
     private var handLabWindow: NSWindow?
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        // `open Lookpoint.app --args -debugRightAltAfter 3` sends one right Alt tap after 3 s.
+        let delay = UserDefaults.standard.double(forKey: "debugRightAltAfter")
+        if delay > 0 {
+            Task {
+                try? await Task.sleep(for: .seconds(delay))
+                NSLog("lookpoint debug: trusted=%d, sending right Alt", AXIsProcessTrusted() ? 1 : 0)
+                model.testRightAlt()
+            }
+        }
+        #endif
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         model.stopGestures()
     }

@@ -165,7 +165,11 @@ struct HandLabView: View {
 
             Spacer()
 
-            Button("清零计数") { lab.resetCounters() }
+            HStack {
+                Button("清零计数") { lab.resetCounters() }
+                Button("测试右 Alt") { model.testRightAlt() }
+                    .disabled(!model.hasAccessibility)
+            }
             HStack {
                 Button(lab.isRecording ? "停止录制" : "开始录制") { lab.toggleRecording() }
                 if lab.isRecording {
