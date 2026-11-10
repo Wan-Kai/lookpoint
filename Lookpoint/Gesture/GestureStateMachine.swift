@@ -50,12 +50,15 @@ struct GestureStateMachine {
         var doubleClickInterval: TimeInterval = 0.4
         var doubleClickDistance = 0.03
 
-        /// Screen points per frame height: slow hand → `slowGain`, fast → `fastGain`.
-        var slowGain = 900.0
-        var fastGain = 3200.0
+        /// Screen widths per frame height of hand movement: slow hand → `slowGain`
+        /// (fine control), fast → `fastGain` (a quick 0.25-frame-height flick
+        /// crosses the screen). Relative to the screen, so both displays feel alike.
+        var slowGain = 0.6
+        var fastGain = 8.0
         /// Hand speeds (frame heights per second) between which the gain ramps.
-        var slowSpeed = 0.05
-        var fastSpeed = 0.6
+        /// The recording put deliberate fast moves at 0.6–1.75 frame heights per second.
+        var slowSpeed = 0.1
+        var fastSpeed = 1.2
         /// Pointer moves smaller than this (frame heights) accumulate instead of moving.
         var deadZone = 0.001
 
@@ -92,7 +95,7 @@ struct GestureStateMachine {
     enum Event: Equatable, Sendable {
         case activated
         case deactivated
-        /// Screen points, y down.
+        /// In widths of the cursor's screen (the same unit on both axes), y down.
         case move(dx: Double, dy: Double)
         case leftDown(clickCount: Int)
         case leftUp(clickCount: Int)

@@ -55,10 +55,10 @@ final class GestureOutput {
         isButtonDown = false
     }
 
-
     private var cursor: CGPoint { CGEvent(source: nil)?.location ?? .zero }
 
     /// Moves within the display under the cursor: the head picks the screen, the hand stays on it.
+    /// `dx`/`dy` are in widths of that display.
     private func move(dx: Double, dy: Double) {
         let from = cursor
         var id: CGDirectDisplayID = 0
@@ -66,8 +66,8 @@ final class GestureOutput {
         let bounds = CGGetDisplaysWithPoint(from, 1, &id, &count) == .success && count > 0
             ? CGDisplayBounds(id) : CGDisplayBounds(CGMainDisplayID())
         let to = CGPoint(
-            x: min(max(from.x + dx, bounds.minX), bounds.maxX - 1),
-            y: min(max(from.y + dy, bounds.minY), bounds.maxY - 1)
+            x: min(max(from.x + dx * bounds.width, bounds.minX), bounds.maxX - 1),
+            y: min(max(from.y + dy * bounds.width, bounds.minY), bounds.maxY - 1)
         )
         let event = CGEvent(mouseEventSource: source, mouseType: isButtonDown ? .leftMouseDragged : .mouseMoved,
                             mouseCursorPosition: to, mouseButton: .left)

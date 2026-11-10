@@ -139,8 +139,8 @@ struct GestureStateMachineTests {
         var replay = Replay.active()
         let events = replay.feed(repeated(15) { open(1 + Double($0) * 0.01) })
         let total = moves(events)
-        #expect(total.dx > 50)
-        #expect(abs(total.dy) < 1e-6)
+        #expect(total.dx > 0.03)
+        #expect(abs(total.dy) < 1e-9)
     }
 
     @Test func stillHandDoesNotMove() {
@@ -154,6 +154,22 @@ struct GestureStateMachineTests {
         var fast = Replay.active()
         let fastTotal = moves(fast.feed(repeated(6) { open(1 + Double($0) * 0.1 / 6) } + repeated(30) { _ in open(1.1) }))
         #expect(fastTotal.dx > slowTotal.dx * 1.5)
+    }
+
+    @Test func quickFlickCrossesTheScreen() {
+        var replay = Replay.active()
+        // 0.25 frame heights in about 0.3 s, then rest: a fast hand reaches the far edge.
+        let flick = repeated(9) { open(1 + 0.25 * (1 - cos(Double($0 + 1) / 9 * .pi)) / 2) }
+        let total = moves(replay.feed(flick + repeated(10) { _ in open(1.25) }))
+        #expect(total.dx >= 1)
+    }
+
+    @Test func slowHandStaysPrecise() {
+        var replay = Replay.active()
+        // 0.05 frame heights over 1.5 s (a few centimetres, slowly).
+        let total = moves(replay.feed(repeated(45) { open(1 + Double($0 + 1) * 0.05 / 45) }))
+        #expect(total.dx > 0.01)
+        #expect(total.dx < 0.05)
     }
 
     @Test func otherShapeFreezesThePointer() {
@@ -170,7 +186,7 @@ struct GestureStateMachineTests {
         // Clutch: move with a fist, then open far away.
         _ = replay.feed(repeated(20) { fist(1 + Double($0) * 0.02) })
         let events = replay.feed(repeated(10) { _ in open(1.4) })
-        #expect(abs(moves(events).dx) < 30)
+        #expect(abs(moves(events).dx) < 0.02)
     }
 
     // MARK: Click and drag
@@ -209,7 +225,7 @@ struct GestureStateMachineTests {
         #expect(buttons(events) == [.leftDown(clickCount: 1), .leftUp(clickCount: 1)])
         let downIndex = events.firstIndex(of: .leftDown(clickCount: 1))!
         let upIndex = events.firstIndex(of: .leftUp(clickCount: 1))!
-        #expect(moves(Array(events[downIndex..<upIndex])).dx > 50)
+        #expect(moves(Array(events[downIndex..<upIndex])).dx > 0.03)
     }
 
     @Test func pinchJitterInsideHysteresisIsOneClick() {
