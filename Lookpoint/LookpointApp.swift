@@ -35,6 +35,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 model.testRightAlt()
             }
         }
+        // `-debugAppSwitchAfter 3` swipes to the next app once after 3 s.
+        let switchDelay = UserDefaults.standard.double(forKey: "debugAppSwitchAfter")
+        if switchDelay > 0 {
+            Task {
+                try? await Task.sleep(for: .seconds(switchDelay))
+                model.testGesture(.appSwitch(forward: true))
+                try? await Task.sleep(for: .seconds(0.5))
+                model.testGesture(.appSwitchCommit)
+            }
+        }
         #endif
     }
 

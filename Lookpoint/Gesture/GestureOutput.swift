@@ -7,10 +7,16 @@ import CoreGraphics
 final class GestureOutput {
     private let source = CGEventSource(stateID: .hidSystemState)
     private var isButtonDown = false
+    private var isCommandDown = false
     private var scrollRemainder = 0.0
 
     private static let rightOptionKeyCode: CGKeyCode = 61
     private static let returnKeyCode: CGKeyCode = 36
+    private static let commandKeyCode: CGKeyCode = 55
+    private static let tabKeyCode: CGKeyCode = 48
+    // NX_DEVICELCMDKEYMASK / NX_DEVICELSHIFTKEYMASK, as a real left ⌘ / ⇧ would set.
+    private static let commandDown = CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x08 | 0x100)
+    private static let commandShiftDown = CGEventFlags(rawValue: commandDown.rawValue | CGEventFlags.maskShift.rawValue | 0x02)
     // NX_DEVICERALTKEYMASK and NX_NONCOALSESCEDMASK: apps that tell left from right Option read these.
     private static let rightOptionDown = CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x40 | 0x100)
     private static let noModifiers = CGEventFlags(rawValue: 0x100)
@@ -20,7 +26,7 @@ final class GestureOutput {
         case .activated:
             scrollRemainder = 0
         case .deactivated:
-            releaseButton()
+            releaseAll()
         case .move(let dx, let dy):
             move(dx: dx, dy: dy)
         case .leftDown(let clicks):
@@ -33,6 +39,16 @@ final class GestureOutput {
             scroll(dy: dy)
         case .toggleRightOption:
             tapRightOption()
+        case .appSwitch(let forward):
+            if !isCommandDown {
+                postKey(Self.commandKeyCode, down: true, flags: Self.commandDown, type: .flagsChanged)
+                isCommandDown = true
+            }
+            let flags = forward ? Self.commandDown : Self.commandShiftDown
+            postKey(Self.tabKeyCode, down: true, flags: flags)
+            postKey(Self.tabKeyCode, down: false, flags: flags)
+        case .appSwitchCommit:
+            releaseCommand()
         case .pressReturn:
             for down in [true, false] {
                 let event = CGEvent(keyboardEventSource: source, virtualKey: Self.returnKeyCode, keyDown: down)
@@ -42,11 +58,26 @@ final class GestureOutput {
         }
     }
 
-    /// Never leave the button held, e.g. when gestures are turned off mid-drag.
-    func releaseButton() {
-        guard isButtonDown else { return }
-        postMouse(.leftMouseUp, at: cursor, clicks: 1)
-        isButtonDown = false
+    /// Never leave the button or ⌘ held, e.g. when gestures are turned off mid-drag.
+    func releaseAll() {
+        if isButtonDown {
+            postMouse(.leftMouseUp, at: cursor, clicks: 1)
+            isButtonDown = false
+        }
+        releaseCommand()
+    }
+
+    private func releaseCommand() {
+        guard isCommandDown else { return }
+        postKey(Self.commandKeyCode, down: false, flags: Self.noModifiers, type: .flagsChanged)
+        isCommandDown = false
+    }
+
+    private func postKey(_ key: CGKeyCode, down: Bool, flags: CGEventFlags, type: CGEventType? = nil) {
+        let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: down)
+        if let type { event?.type = type }
+        event?.flags = flags
+        event?.post(tap: .cghidEventTap)
     }
 
     private var cursor: CGPoint { CGEvent(source: nil)?.location ?? .zero }

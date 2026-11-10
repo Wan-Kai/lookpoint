@@ -78,10 +78,21 @@ struct RecordedGestureTests {
         #expect((2...4).contains(toggles.count))
     }
 
-    @Test func twoFingersScroll() throws {
+    @Test func stillTwoFingersBarelyScroll() throws {
+        // 436–445 s: a V held fairly still. Jitter must not turn into scrolling.
         let timeline = try recordedTimeline()
-        #expect(events(in: timeline, from: 436, to: 445).contains {
-            if case .scroll = $0 { return true }
+        let total = events(in: timeline, from: 436, to: 445).reduce(0.0) { sum, event in
+            if case .scroll(let dy) = event { return sum + abs(dy) }
+            return sum
+        }
+        #expect(total < 50)
+    }
+
+    @Test func noAppSwitchingInEverydayMovement() throws {
+        // The recording has no horizontal V swipes.
+        let timeline = try recordedTimeline()
+        #expect(!timeline.contains {
+            if case .appSwitch = $0.event { return true }
             return false
         })
     }

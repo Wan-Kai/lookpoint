@@ -10,7 +10,10 @@ import Foundation
 ///   Two pinches within `doubleClickInterval` make a double click.
 ///   A pinch only starts shortly after an open palm, so a fist (whose thumb
 ///   also touches the index finger) never clicks.
-/// - Two fingers (V): vertical hand movement scrolls, like a trackpad.
+/// - Two fingers (V): the first movement picks an axis for that V.
+///   Vertical scrolls, like a trackpad. A quick horizontal swipe switches
+///   apps (⌘Tab right, ⌘⇧Tab left); ⌘ stays held while the V does, so more
+///   swipes keep stepping, and leaving the V commits.
 /// - Point held still for `holdDuration`: toggle right Option (voice input on/off).
 ///   When that toggle ends voice input, keeping the point still another
 ///   `enterDelay` presses Return, which also gives the text time to land.
@@ -54,6 +57,18 @@ struct GestureStateMachine {
         /// Scroll points per frame height of vertical hand movement.
         var scrollGain = 2500.0
 
+        /// V movement (frame heights) that decides between scrolling and swiping.
+        var axisDistance = 0.02
+        /// Horizontal must beat vertical by this factor to count as a swipe.
+        var axisRatio = 1.5
+        /// A swipe covers this distance within `swipeMaxDuration`.
+        var swipeDistance = 0.08
+        var swipeMaxDuration: TimeInterval = 0.35
+        /// After a swipe the hand must slow below this (frame heights/s) before the next one counts.
+        var settleSpeed = 0.25
+        /// The return stroke: an opposite swipe this soon after one is ignored.
+        var oppositeLockout: TimeInterval = 0.6
+
         var holdDuration: TimeInterval = 0.6
         var holdTolerance = 0.02
         var holdCooldown: TimeInterval = 1.0
@@ -75,6 +90,10 @@ struct GestureStateMachine {
         case scroll(dy: Double)
         case toggleRightOption
         case pressReturn
+        /// Holds ⌘ (if not yet) and taps Tab; `forward == false` adds ⇧.
+        case appSwitch(forward: Bool)
+        /// Releases ⌘, picking the highlighted app.
+        case appSwitchCommit
     }
 
     enum Mode: Equatable, Sendable {
@@ -85,6 +104,7 @@ struct GestureStateMachine {
         case pressed
         case dragging
         case scrolling
+        case switchingApps
         case holding
     }
 
@@ -106,6 +126,14 @@ struct GestureStateMachine {
     /// Where the pointer was last moved from; nil re-anchors on the next frame.
     private var pointerReference: SIMD2<Double>?
     private var scrollReference: Double?
+
+    private enum Axis { case undecided, vertical, horizontal }
+    private var axis = Axis.undecided
+    private var twoStart: SIMD2<Double>?
+    private var swipeOrigin: (x: Double, time: TimeInterval)?
+    private var settling = false
+    private var lastSwipe: (time: TimeInterval, forward: Bool)?
+    private var isSwitcherOpen = false
 
     private var pinchFrames = 0
     private var releaseFrames = 0
@@ -184,6 +212,8 @@ struct GestureStateMachine {
         guard let features, features.anchor.y < config.activeMaxY else {
             var events: [Event] = []
             if isPressed { events += release() }
+            events += commitSwitcher()
+            resetTwoFingers()
             pointerReference = nil
             scrollReference = nil
             holdStart = nil
@@ -197,10 +227,16 @@ struct GestureStateMachine {
         lastSeen = time
         let anchor = smooth(features.anchor, at: time)
         let speed = handSpeed(anchor, at: time)
-        updateShape(features.shape)
+        let shapeEvents = updateShape(features.shape)
         if stableShape == .open { lastOpen = time }
 
-        if isPressed { return updatePressed(features, anchor: anchor, speed: speed, at: time) }
+        if isPressed { return shapeEvents + updatePressed(features, anchor: anchor, speed: speed, at: time) }
+        return shapeEvents + updateGestures(features, anchor: anchor, speed: speed, at: time)
+    }
+
+    private mutating func updateGestures(
+        _ features: HandFeatures, anchor: SIMD2<Double>, speed: Double, at time: TimeInterval
+    ) -> [Event] {
 
         // Armed right after an open palm, or right after a click (for double clicks).
         let armed = time - lastOpen <= config.pinchArmWindow + Self.epsilon
@@ -218,11 +254,7 @@ struct GestureStateMachine {
             mode = .moving
             return moveEvents(to: anchor, speed: speed)
         case .two:
-            mode = .scrolling
-            defer { scrollReference = anchor.y }
-            guard let reference = scrollReference else { return [] }
-            let dy = (anchor.y - reference) * config.scrollGain
-            return dy == 0 ? [] : [.scroll(dy: dy)]
+            return twoFingerEvents(anchor: anchor, speed: speed, at: time)
         case .point:
             mode = .holding
             return holdEvents(anchor: anchor, at: time)
@@ -282,6 +314,8 @@ struct GestureStateMachine {
     private mutating func deactivate() -> [Event] {
         var events: [Event] = []
         if isPressed { events += release() }
+        events += commitSwitcher()
+        resetTwoFingers()
         events.append(.deactivated)
         mode = .idle
         pointerReference = nil
@@ -299,14 +333,17 @@ struct GestureStateMachine {
 
     // MARK: Helpers
 
-    private mutating func updateShape(_ shape: HandShape) {
+    private mutating func updateShape(_ shape: HandShape) -> [Event] {
         if shape == candidateShape {
             candidateFrames += 1
         } else {
             candidateShape = shape
             candidateFrames = 1
         }
-        guard candidateFrames >= config.shapeFrames, candidateShape != stableShape else { return }
+        guard candidateFrames >= config.shapeFrames, candidateShape != stableShape else { return [] }
+        // Leaving the V picks the highlighted app.
+        let events = commitSwitcher()
+        resetTwoFingers()
         stableShape = candidateShape
         // Each shape starts from where the hand is now, so switching never jumps.
         pointerReference = nil
@@ -314,6 +351,78 @@ struct GestureStateMachine {
         holdStart = nil
         holdFired = false
         pendingReturn = nil
+        return events
+    }
+
+    private mutating func twoFingerEvents(anchor: SIMD2<Double>, speed: Double, at time: TimeInterval) -> [Event] {
+        guard let start = twoStart else {
+            twoStart = anchor
+            swipeOrigin = (anchor.x, time)
+            mode = .scrolling
+            return []
+        }
+        if axis == .undecided {
+            let d = anchor - start
+            if abs(d.x) >= config.axisDistance, abs(d.x) > config.axisRatio * abs(d.y) {
+                axis = .horizontal
+            } else if abs(d.y) >= config.axisDistance, abs(d.y) >= abs(d.x) {
+                axis = .vertical
+                scrollReference = anchor.y
+                mode = .scrolling
+                return []
+            }
+        }
+        switch axis {
+        case .undecided:
+            return []
+        case .vertical:
+            mode = .scrolling
+            defer { scrollReference = anchor.y }
+            guard let reference = scrollReference else { return [] }
+            let dy = (anchor.y - reference) * config.scrollGain
+            return dy == 0 ? [] : [.scroll(dy: dy)]
+        case .horizontal:
+            mode = .switchingApps
+            return swipeEvents(anchor: anchor, speed: speed, at: time)
+        }
+    }
+
+    private mutating func swipeEvents(anchor: SIMD2<Double>, speed: Double, at time: TimeInterval) -> [Event] {
+        if settling {
+            guard speed < config.settleSpeed else { return [] }
+            settling = false
+            swipeOrigin = (anchor.x, time)
+            return []
+        }
+        guard let origin = swipeOrigin, time - origin.time <= config.swipeMaxDuration + Self.epsilon else {
+            // Too slow to be a swipe: start measuring from here.
+            swipeOrigin = (anchor.x, time)
+            return []
+        }
+        let dx = anchor.x - origin.x
+        guard abs(dx) >= config.swipeDistance else { return [] }
+        let forward = dx > 0
+        settling = true
+        if let last = lastSwipe, last.forward != forward, time - last.time < config.oppositeLockout {
+            return []
+        }
+        lastSwipe = (time, forward)
+        isSwitcherOpen = true
+        return [.appSwitch(forward: forward)]
+    }
+
+    private mutating func commitSwitcher() -> [Event] {
+        guard isSwitcherOpen else { return [] }
+        isSwitcherOpen = false
+        return [.appSwitchCommit]
+    }
+
+    private mutating func resetTwoFingers() {
+        axis = .undecided
+        twoStart = nil
+        swipeOrigin = nil
+        settling = false
+        lastSwipe = nil
     }
 
     private mutating func moveEvents(to anchor: SIMD2<Double>, speed: Double) -> [Event] {

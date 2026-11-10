@@ -120,10 +120,16 @@ final class AppModel {
         gestureOutput.perform(.toggleRightOption)
     }
 
+    #if DEBUG
+    func testGesture(_ event: GestureStateMachine.Event) {
+        gestureOutput.perform(event)
+    }
+    #endif
+
     /// Releases anything gestures hold. Call before quitting.
     func stopGestures() {
         for event in gestures.reset() where gesturesLive { gestureOutput.perform(event) }
-        gestureOutput.releaseButton()
+        gestureOutput.releaseAll()
         gestureMode = gestures.mode
     }
 

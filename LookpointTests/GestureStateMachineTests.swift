@@ -254,6 +254,82 @@ struct GestureStateMachineTests {
         #expect(scrolled(replay.feed(repeated(30) { _ in two() })) == 0)
     }
 
+    // MARK: App switching
+
+    /// A V that settles, then a quick horizontal swipe of 0.12 frame heights over 6 frames.
+    private static func swipe(from x: Double, forward: Bool) -> [HandFeatures?] {
+        repeated(6) { two(x + (forward ? 1 : -1) * Double($0 + 1) * 0.02) }
+    }
+
+    private static func switches(_ events: [Event]) -> [Event] {
+        events.filter {
+            switch $0 {
+            case .appSwitch, .appSwitchCommit: true
+            default: false
+            }
+        }
+    }
+
+    @Test func swipeRightSwitchesToTheNextApp() {
+        var replay = Replay.active()
+        let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
+            + repeated(10) { _ in two(1.12) } + repeated(5) { _ in open(1.12) })
+        #expect(Self.switches(events) == [.appSwitch(forward: true), .appSwitchCommit])
+        #expect(scrolled(events) == 0)
+        #expect(moves(events).count == 0)
+    }
+
+    @Test func swipeLeftSwitchesToThePreviousApp() {
+        var replay = Replay.active()
+        let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: false)
+            + repeated(10) { _ in two(0.88) } + repeated(5) { _ in open(0.88) })
+        #expect(Self.switches(events) == [.appSwitch(forward: false), .appSwitchCommit])
+    }
+
+    @Test func returnStrokeDoesNotSwitchBack() {
+        var replay = Replay.active()
+        let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
+            + Self.swipe(from: 1.12, forward: false) + repeated(10) { _ in two() } + repeated(5) { _ in open() })
+        #expect(Self.switches(events) == [.appSwitch(forward: true), .appSwitchCommit])
+    }
+
+    @Test func moreSwipesKeepSteppingThenCommitOnce() {
+        var replay = Replay.active()
+        let pause = repeated(10) { _ in two(1.12) }
+        // Bring the hand back slowly, then swipe again.
+        let back = repeated(30) { two(1.12 - Double($0 + 1) * 0.004) }
+        let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true) + pause + back
+            + repeated(5) { _ in two() } + Self.swipe(from: 1, forward: true) + pause + repeated(5) { _ in open(1.12) })
+        #expect(Self.switches(events) == [.appSwitch(forward: true), .appSwitch(forward: true), .appSwitchCommit])
+    }
+
+    @Test func slowHorizontalMovementDoesNotSwitch() {
+        var replay = Replay.active()
+        let events = replay.feed(repeated(4) { _ in two() } + repeated(60) { two(1 + Double($0) * 0.003) })
+        #expect(Self.switches(events).isEmpty)
+        #expect(scrolled(events) == 0)
+    }
+
+    @Test func scrollingWithSidewaysWobbleDoesNotSwitch() {
+        var replay = Replay.active()
+        let events = replay.feed(repeated(4) { _ in two() }
+            + repeated(40) { two(1 + ($0.isMultiple(of: 2) ? 0.015 : -0.015), 0.6 + Double($0) * 0.005) })
+        #expect(Self.switches(events).isEmpty)
+        #expect(scrolled(events) > 300)
+    }
+
+    @Test func losingTheHandCommitsTheSwitch() {
+        var replay = Replay.active()
+        _ = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true))
+        #expect(replay.feed([nil]) == [.appSwitchCommit])
+    }
+
+    @Test func typingCommitsTheSwitch() {
+        var replay = Replay.active()
+        _ = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true))
+        #expect(replay.feed([two(1.12)], typing: true) == [.appSwitchCommit, .deactivated])
+    }
+
     // MARK: Right Option
 
     @Test func pointHeldStillTogglesOnce() {
