@@ -11,9 +11,8 @@ import Foundation
 ///   A pinch only starts shortly after an open palm, so a fist (whose thumb
 ///   also touches the index finger) never clicks.
 /// - Two fingers (V): the first movement picks an axis for that V.
-///   Vertical scrolls, like a trackpad. A quick horizontal swipe switches to
-///   the next (right) or previous (left) window on the cursor's screen; more
-///   swipes in the same V keep stepping, and leaving the V ends the session.
+///   Vertical scrolls, like a trackpad. A quick horizontal swipe is the
+///   trackpad's three-finger swipe (switch Space / full-screen app).
 ///   Swipes are strokes: runs of fast movement in one direction. A stroke
 ///   that starts where the previous one ended and heads back to where it
 ///   began is the hand returning, not a swipe the other way.
@@ -103,10 +102,8 @@ struct GestureStateMachine {
         case scroll(dy: Double)
         case toggleRightOption
         case pressReturn
-        /// Brings the next (or previous) window on the cursor's screen to the front.
-        case switchWindow(forward: Bool)
-        /// The V ended; the next swipe starts from the current window order again.
-        case switchWindowEnd
+        /// A quick horizontal V swipe; `rightward` is the hand's direction.
+        case swipe(rightward: Bool)
     }
 
     enum Mode: Equatable, Sendable {
@@ -117,7 +114,7 @@ struct GestureStateMachine {
         case pressed
         case dragging
         case scrolling
-        case switchingWindows
+        case swiping
         case holding
     }
 
@@ -155,7 +152,6 @@ struct GestureStateMachine {
     /// The last stroke long enough to count, for telling returns apart.
     private var lastStroke: (direction: Double, startX: Double, endX: Double, end: TimeInterval, wasReturn: Bool)?
     private var lastRawX: (x: Double, time: TimeInterval)?
-    private var isSwitching = false
 
     private var pinchFrames = 0
     private var releaseFrames = 0
@@ -236,7 +232,6 @@ struct GestureStateMachine {
             if time - lastSeen <= config.gapTolerance + Self.epsilon { return [] }
             var events: [Event] = []
             if isPressed { events += release() }
-            events += endSwitching()
             resetTwoFingers()
             pointerReference = nil
             scrollReference = nil
@@ -251,11 +246,11 @@ struct GestureStateMachine {
         lastSeen = time
         let anchor = smooth(features.anchor, at: time)
         let speed = handSpeed(anchor, at: time)
-        let shapeEvents = updateShape(features.shape)
+        updateShape(features.shape)
         if stableShape == .open { lastOpen = time }
 
-        if isPressed { return shapeEvents + updatePressed(features, anchor: anchor, speed: speed, at: time) }
-        return shapeEvents + updateGestures(features, anchor: anchor, speed: speed, at: time)
+        if isPressed { return updatePressed(features, anchor: anchor, speed: speed, at: time) }
+        return updateGestures(features, anchor: anchor, speed: speed, at: time)
             + (stableShape == .two ? strokeEvents(rawX: features.anchor.x, at: time) : [])
     }
 
@@ -339,7 +334,6 @@ struct GestureStateMachine {
     private mutating func deactivate() -> [Event] {
         var events: [Event] = []
         if isPressed { events += release() }
-        events += endSwitching()
         resetTwoFingers()
         events.append(.deactivated)
         mode = .idle
@@ -358,16 +352,14 @@ struct GestureStateMachine {
 
     // MARK: Helpers
 
-    private mutating func updateShape(_ shape: HandShape) -> [Event] {
+    private mutating func updateShape(_ shape: HandShape) {
         if shape == candidateShape {
             candidateFrames += 1
         } else {
             candidateShape = shape
             candidateFrames = 1
         }
-        guard candidateFrames >= config.shapeFrames, candidateShape != stableShape else { return [] }
-        // Leaving the V ends a window-switching session.
-        let events = endSwitching()
+        guard candidateFrames >= config.shapeFrames, candidateShape != stableShape else { return }
         resetTwoFingers()
         stableShape = candidateShape
         // Each shape starts from where the hand is now, so switching never jumps.
@@ -376,7 +368,6 @@ struct GestureStateMachine {
         holdStart = nil
         holdFired = false
         pendingReturn = nil
-        return events
     }
 
     private mutating func twoFingerEvents(anchor: SIMD2<Double>, speed: Double, at time: TimeInterval) -> [Event] {
@@ -407,7 +398,7 @@ struct GestureStateMachine {
             return dy == 0 ? [] : [.scroll(dy: dy)]
         case .horizontal:
             // Swipes come from `strokeEvents`, which runs for every V frame.
-            mode = .switchingWindows
+            mode = .swiping
             return []
         }
     }
@@ -450,22 +441,15 @@ struct GestureStateMachine {
         current.fired = true
         stroke = current
         axis = .horizontal
-        mode = .switchingWindows
+        mode = .swiping
         scrollReference = nil
-        isSwitching = true
-        return [.switchWindow(forward: current.direction > 0)]
+        return [.swipe(rightward: current.direction > 0)]
     }
 
     private mutating func endStroke(at time: TimeInterval) {
         defer { stroke = nil }
         guard let current = stroke, abs(current.lastX - current.startX) >= config.minimumStroke else { return }
         lastStroke = (current.direction, current.startX, current.lastX, time, current.isReturn)
-    }
-
-    private mutating func endSwitching() -> [Event] {
-        guard isSwitching else { return [] }
-        isSwitching = false
-        return [.switchWindowEnd]
     }
 
     private mutating func resetTwoFingers() {

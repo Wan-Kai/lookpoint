@@ -273,7 +273,7 @@ struct GestureStateMachineTests {
         #expect(scrolled(replay.feed(repeated(30) { _ in two() })) == 0)
     }
 
-    // MARK: App switching
+    // MARK: Horizontal swipes
 
     /// A V that settles, then a quick horizontal swipe of 0.12 frame heights over 6 frames.
     private static func swipe(from x: Double, forward: Bool) -> [HandFeatures?] {
@@ -283,7 +283,7 @@ struct GestureStateMachineTests {
     private static func switches(_ events: [Event]) -> [Event] {
         events.filter {
             switch $0 {
-            case .switchWindow, .switchWindowEnd: true
+            case .swipe: true
             default: false
             }
         }
@@ -293,7 +293,7 @@ struct GestureStateMachineTests {
         var replay = Replay.active()
         let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
             + repeated(10) { _ in two(1.12) } + repeated(5) { _ in open(1.12) })
-        #expect(Self.switches(events) == [.switchWindow(forward: true), .switchWindowEnd])
+        #expect(Self.switches(events) == [.swipe(rightward: true)])
         #expect(scrolled(events) == 0)
         #expect(moves(events).count == 0)
     }
@@ -302,24 +302,24 @@ struct GestureStateMachineTests {
         var replay = Replay.active()
         let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: false)
             + repeated(10) { _ in two(0.88) } + repeated(5) { _ in open(0.88) })
-        #expect(Self.switches(events) == [.switchWindow(forward: false), .switchWindowEnd])
+        #expect(Self.switches(events) == [.swipe(rightward: false)])
     }
 
     @Test func returnStrokeDoesNotSwitchBack() {
         var replay = Replay.active()
         let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
             + Self.swipe(from: 1.12, forward: false) + repeated(10) { _ in two() } + repeated(5) { _ in open() })
-        #expect(Self.switches(events) == [.switchWindow(forward: true), .switchWindowEnd])
+        #expect(Self.switches(events) == [.swipe(rightward: true)])
     }
 
-    @Test func moreSwipesKeepSteppingThenCommitOnce() {
+    @Test func repeatedSwipesEachSwitch() {
         var replay = Replay.active()
         let pause = repeated(10) { _ in two(1.12) }
         // Bring the hand back slowly, then swipe again.
         let back = repeated(30) { two(1.12 - Double($0 + 1) * 0.004) }
         let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true) + pause + back
             + repeated(5) { _ in two() } + Self.swipe(from: 1, forward: true) + pause + repeated(5) { _ in open(1.12) })
-        #expect(Self.switches(events) == [.switchWindow(forward: true), .switchWindow(forward: true), .switchWindowEnd])
+        #expect(Self.switches(events) == [.swipe(rightward: true), .swipe(rightward: true)])
     }
 
     @Test func slowHorizontalMovementDoesNotSwitch() {
@@ -337,18 +337,11 @@ struct GestureStateMachineTests {
         #expect(scrolled(events) > 300)
     }
 
-    @Test func losingTheHandEndsTheSwitch() {
-        var replay = Replay.active()
-        _ = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true))
-        #expect(replay.feed(repeated(7) { _ in nil }).isEmpty)
-        #expect(replay.feed(repeated(2) { _ in nil }) == [.switchWindowEnd])
-    }
-
     @Test func blurredFramesMidSwipeKeepTheSwipe() {
         var replay = Replay.active()
         let blurred: [HandFeatures?] = [two(1.02), two(1.04), nil, nil, nil, two(1.12), two(1.14)]
         let events = replay.feed(repeated(4) { _ in two() } + blurred + repeated(5) { _ in two(1.14) })
-        #expect(Self.switches(events) == [.switchWindow(forward: true)])
+        #expect(Self.switches(events) == [.swipe(rightward: true)])
     }
 
     @Test func returnAfterAPauseIsStillAReturn() {
@@ -356,7 +349,7 @@ struct GestureStateMachineTests {
         // Swipe right, rest 0.8 s out there, then bring the hand back.
         let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
             + repeated(24) { _ in two(1.12) } + Self.swipe(from: 1.12, forward: false) + repeated(5) { _ in two() })
-        #expect(Self.switches(events) == [.switchWindow(forward: true)])
+        #expect(Self.switches(events) == [.swipe(rightward: true)])
     }
 
     @Test func deliberateReverseAfterTheReturnWindowSwitches() {
@@ -364,7 +357,7 @@ struct GestureStateMachineTests {
         // Swipe right, stay out there 2 s, then swipe left on purpose.
         let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
             + repeated(60) { _ in two(1.12) } + Self.swipe(from: 1.12, forward: false) + repeated(5) { _ in two(1) })
-        #expect(Self.switches(events) == [.switchWindow(forward: true), .switchWindow(forward: false)])
+        #expect(Self.switches(events) == [.swipe(rightward: true), .swipe(rightward: false)])
     }
 
     @Test func swipeLeftAfterReturningFromARightSwipe() {
@@ -373,14 +366,9 @@ struct GestureStateMachineTests {
         let events = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true)
             + Self.swipe(from: 1.12, forward: false) + repeated(8) { _ in two(1) } + Self.swipe(from: 1, forward: false)
             + repeated(5) { _ in two(0.88) })
-        #expect(Self.switches(events) == [.switchWindow(forward: true), .switchWindow(forward: false)])
+        #expect(Self.switches(events) == [.swipe(rightward: true), .swipe(rightward: false)])
     }
 
-    @Test func typingCommitsTheSwitch() {
-        var replay = Replay.active()
-        _ = replay.feed(repeated(4) { _ in two() } + Self.swipe(from: 1, forward: true))
-        #expect(replay.feed([two(1.12)], typing: true) == [.switchWindowEnd, .deactivated])
-    }
 
     // MARK: Right Option
 

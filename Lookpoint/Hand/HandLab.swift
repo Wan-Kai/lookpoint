@@ -126,10 +126,8 @@ final class HandLab {
                 text = "右 Alt 切换"
             case .pressReturn:
                 text = "回车"
-            case .switchWindow(let forward):
-                text = forward ? "切换窗口 →" : "切换窗口 ←"
-            case .switchWindowEnd:
-                text = "切换结束"
+            case .swipe(let rightward):
+                text = rightward ? "右挥：切到左边的空间 ⌃←" : "左挥：切到右边的空间 ⌃→"
             }
             let stamp = Date.now.formatted(.dateTime.hour().minute().second())
             eventLog.insert("\(stamp)  \(text)", at: 0)

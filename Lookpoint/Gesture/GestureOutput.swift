@@ -7,11 +7,18 @@ import CoreGraphics
 final class GestureOutput {
     private let source = CGEventSource(stateID: .hidSystemState)
     private var isButtonDown = false
-    private let windows = WindowSwitcher()
     private var scrollRemainder = 0.0
 
     private static let rightOptionKeyCode: CGKeyCode = 61
     private static let returnKeyCode: CGKeyCode = 36
+    private static let controlKeyCode: CGKeyCode = 59
+    private static let leftArrowKeyCode: CGKeyCode = 123
+    private static let rightArrowKeyCode: CGKeyCode = 124
+    // ⌃ (with NX_DEVICELCTLKEYMASK), and ⌃ plus the fn / keypad flags real arrow keys carry:
+    // the "Move left/right a space" shortcut is registered as ⌃ + fn + arrow.
+    private static let controlDown = CGEventFlags(rawValue: CGEventFlags.maskControl.rawValue | 0x01 | 0x100)
+    private static let controlArrow = CGEventFlags(rawValue: controlDown.rawValue
+        | CGEventFlags.maskSecondaryFn.rawValue | CGEventFlags.maskNumericPad.rawValue)
     // NX_DEVICERALTKEYMASK and NX_NONCOALSESCEDMASK: apps that tell left from right Option read these.
     private static let rightOptionDown = CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x40 | 0x100)
     private static let noModifiers = CGEventFlags(rawValue: 0x100)
@@ -34,10 +41,10 @@ final class GestureOutput {
             scroll(dy: dy)
         case .toggleRightOption:
             tapRightOption()
-        case .switchWindow(let forward):
-            windows.step(forward: forward)
-        case .switchWindowEnd:
-            windows.end()
+        case .swipe(let rightward):
+            // Like the trackpad's three-finger swipe: content follows the hand,
+            // so swiping left reveals the Space on the right (⌃→).
+            tapControlArrow(rightward ? Self.leftArrowKeyCode : Self.rightArrowKeyCode)
         case .pressReturn:
             for down in [true, false] {
                 let event = CGEvent(keyboardEventSource: source, virtualKey: Self.returnKeyCode, keyDown: down)
@@ -49,7 +56,6 @@ final class GestureOutput {
 
     /// Never leave the button held, e.g. when gestures are turned off mid-drag.
     func releaseAll() {
-        windows.end()
         guard isButtonDown else { return }
         postMouse(.leftMouseUp, at: cursor, clicks: 1)
         isButtonDown = false
@@ -95,6 +101,30 @@ final class GestureOutput {
                 wheel1: Int32(pixels), wheel2: 0, wheel3: 0)?
             .post(tap: .cghidEventTap)
     }
+
+    /// The "Move left/right a space" shortcut only fires for events posted to
+    /// the session tap with a short gap between them (tested on macOS 26:
+    /// the HID tap, or no gap, is ignored). The gaps run off the main thread.
+    private func tapControlArrow(_ arrow: CGKeyCode) {
+        let presses: [(key: CGKeyCode, down: Bool, flags: CGEventFlags, isModifier: Bool)] = [
+            (Self.controlKeyCode, true, Self.controlDown, true),
+            (arrow, true, Self.controlArrow, false),
+            (arrow, false, Self.controlArrow, false),
+            (Self.controlKeyCode, false, Self.noModifiers, true),
+        ]
+        Self.keySequenceQueue.async {
+            let source = CGEventSource(stateID: .hidSystemState)
+            for press in presses {
+                let event = CGEvent(keyboardEventSource: source, virtualKey: press.key, keyDown: press.down)
+                if press.isModifier { event?.type = .flagsChanged }
+                event?.flags = press.flags
+                event?.post(tap: .cgSessionEventTap)
+                usleep(20_000)
+            }
+        }
+    }
+
+    private static let keySequenceQueue = DispatchQueue(label: "lookpoint.keys")
 
     private func tapRightOption() {
         for (down, flags) in [(true, Self.rightOptionDown), (false, Self.noModifiers)] {

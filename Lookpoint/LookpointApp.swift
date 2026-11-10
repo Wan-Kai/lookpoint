@@ -35,14 +35,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 model.testRightAlt()
             }
         }
-        // `-debugWindowSwitchAfter 3` switches to the next window on the cursor's screen after 3 s.
-        let switchDelay = UserDefaults.standard.double(forKey: "debugWindowSwitchAfter")
-        if switchDelay > 0 {
+        // `-debugSwipeAfter 3 -debugSwipeRightward YES` sends one V swipe after 3 s.
+        let swipeDelay = UserDefaults.standard.double(forKey: "debugSwipeAfter")
+        if swipeDelay > 0 {
+            let rightward = UserDefaults.standard.bool(forKey: "debugSwipeRightward")
             Task {
-                try? await Task.sleep(for: .seconds(switchDelay))
-                model.testGesture(.switchWindow(forward: true))
-                try? await Task.sleep(for: .seconds(0.5))
-                model.testGesture(.switchWindowEnd)
+                try? await Task.sleep(for: .seconds(swipeDelay))
+                model.testGesture(.swipe(rightward: rightward))
             }
         }
         #endif

@@ -87,11 +87,11 @@ struct RecordedGestureTests {
         #expect(total < 50)
     }
 
-    @Test func noAppSwitchingInEverydayMovement() throws {
+    @Test func noSwipesInEverydayMovement() throws {
         // The recording has no horizontal V swipes.
         let timeline = try recordedTimeline()
         #expect(!timeline.contains {
-            if case .switchWindow = $0.event { return true }
+            if case .swipe = $0.event { return true }
             return false
         })
     }
@@ -106,7 +106,7 @@ struct RecordedGestureTests {
     /// coming back after each swipe at nearly the same speed.
     @Test func swipesIgnoreTheReturnStroke() throws {
         let switches = try recordedTimeline("swipe-recording-2026-11-10.json").compactMap { _, event -> Bool? in
-            if case .switchWindow(let forward) = event { return forward }
+            if case .swipe(let rightward) = event { return rightward }
             return nil
         }
         #expect(switches == Array(repeating: false, count: 8) + Array(repeating: true, count: 7))
