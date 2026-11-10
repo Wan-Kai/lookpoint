@@ -3,7 +3,7 @@
 macOS 菜单栏工具，用笔记本自带摄像头做两件事：
 
 1. **看哪块屏，光标就去哪块屏**：根据头部朝向（yaw/pitch）在主屏（内建屏，带摄像头）和副屏之间切换。不做眼动追踪。
-2. **用手势代替鼠标和一个快捷键**：张开手掌激活，移动、点击、拖拽、滚动、切换右 Option（语音输入）。
+2. **用手势代替鼠标和一个快捷键**：张开手掌激活，移动、点击、拖拽、滚动、切换右 Alt（语音输入）。
 
 当前进度：头姿切屏可用；手部识别实测后确定继续用 Vision；手势状态机已完成，试用中（第 4 步）。
 
@@ -53,7 +53,7 @@ xcodebuild -scheme Lookpoint -derivedDataPath build/DerivedData test
 | 左键单击 / 双击 | 拇指和食指捏一下 / 0.4 秒内捏两下 |
 | 拖拽 | 捏住后移动，松开即放下 |
 | 上下滚动 | 双指（V）上下移动，内容跟手走，像触控板 |
-| 右 Option（切换语音输入） | 单指指向，静止保持 0.6 秒；触发后冷却 1 秒，要再触发须先换手形 |
+| 右 Alt（即右 Option ⌥，键码 61；切换语音输入） | 单指指向，静止保持 0.6 秒；触发后冷却 1 秒，要再触发须先换手形 |
 | 退出 | 手离开画面 0.5 秒，或开始打字 |
 
 为什么这样设计（数据来自 2026-11-10 的 7.9 分钟录制，以及对 Vision Pro、Quest、Android XR、Apple Watch 和几个开源手势鼠标的调研）：
@@ -71,7 +71,7 @@ xcodebuild -scheme Lookpoint -derivedDataPath build/DerivedData test
 
 - 画面是镜像的，和照镜子一样：白色是 21 个关键点组成的骨架，红线是食指尖的原始轨迹，绿线是 One-Euro 滤波后的轨迹；捏合时指尖圆点变成黄色。
 - 底部曲线：拇指尖到食指尖的距离除以掌长（和手离摄像头多远无关），虚线是按下 0.25 / 抬起 0.40。
-- 右侧：手势开关、当前手势状态和手形、捏合比、无名指/小指伸直比、点击/滚动/右 Option 计数、事件日志，以及检测帧率、识别率、单帧耗时、抖动。
+- 右侧：手势开关、当前手势状态和手形、捏合比、无名指/小指伸直比、点击/滚动/右 Alt 计数、事件日志，以及检测帧率、识别率、单帧耗时、抖动。
 - 录制：把逐帧关键点存到 `~/Documents/lookpoint-recordings/hand-*.json`，第 4 步的手势状态机单测会用这些录制。
 
 ## 防误切换
@@ -103,7 +103,7 @@ Lookpoint/
   Gesture/
     HandFeatures.swift        21 点 → 手掌中心、捏合比、四指伸直比、手形（纯 Swift）
     GestureStateMachine.swift 手势状态机（纯 Swift）
-    GestureOutput.swift       CGEvent：移动、按键、像素滚动、右 Option
+    GestureOutput.swift       CGEvent：移动、按键、像素滚动、右 Alt
   HeadPose/
     HeadPoseRouter.swift      头姿路由状态机（纯 Swift）
     OneEuroFilter.swift

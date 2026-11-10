@@ -140,7 +140,7 @@ struct HandLabView: View {
                 Divider().gridCellUnsizedAxes(.horizontal)
                 row("点击次数", "\(lab.clickCount)")
                 row("滚动距离", String(format: "%.0f pt", lab.scrollDistance))
-                row("右 Option", "\(lab.toggleCount) 次")
+                row("右 Alt", "\(lab.toggleCount) 次")
                 Divider().gridCellUnsizedAxes(.horizontal)
                 row("检测帧率", "\(lab.framesPerSecond) fps")
                 row("识别到手", String(format: "%.0f%%", lab.handRate * 100))
@@ -158,7 +158,7 @@ struct HandLabView: View {
             }
             .font(.caption.monospacedDigit())
 
-            Text("张开手掌 0.4 秒激活 · 张开平移=移动 · 捏=点击/拖拽 · 双指(V)上下=滚动 · 单指指向静止 0.6 秒=右 Option · 其他手形=停住。红线/绿线是食指尖的原始/滤波轨迹。")
+            Text("张开手掌 0.4 秒激活 · 张开平移=移动 · 捏=点击/拖拽 · 双指(V)上下=滚动 · 单指指向静止 0.6 秒=右 Alt · 其他手形=停住。红线/绿线是食指尖的原始/滤波轨迹。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -196,7 +196,7 @@ struct HandLabView: View {
         case .pressed: "按下"
         case .dragging: "拖拽"
         case .scrolling: "滚动"
-        case .holding: "指向（保持触发右 Option）"
+        case .holding: "指向（保持触发右 Alt）"
         }
     }
 
