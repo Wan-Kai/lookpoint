@@ -61,8 +61,9 @@ struct GestureStateMachine {
         /// Pointer moves smaller than this (frame heights) accumulate instead of moving.
         var deadZone = 0.001
 
-        /// Scroll points per frame height of vertical hand movement.
-        var scrollGain = 2500.0
+        /// Scroll points per frame height of vertical hand movement: a 0.1
+        /// frame-height move scrolls about 600 pt, more than half a screen.
+        var scrollGain = 6000.0
 
         /// V movement (frame heights) that decides between scrolling and swiping.
         var axisDistance = 0.02
